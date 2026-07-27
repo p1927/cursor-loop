@@ -63,24 +63,63 @@ Optional sections declared in `instances.manifest.json` (e.g. `UI_PROPOSALS`, `U
 | `review_skip_reason` | text | Required when skipped |
 | `review_round` | integer | Incremented on each code-changing tick |
 | `review_diff_range` | e.g. `HEAD~1..HEAD` or `uncommitted` | Scope Phase 6 reviewed |
+| `review_changed_files` | space-separated paths | From `prepare_review_tick --apply`; must match git at arm |
+| `review_fingerprint` | 16-char hash | Stable hash of `review_changed_files` list |
 | `code_changed` | `yes` / `no` | Set at end of Phase 5 |
 | `confirmed_next` | backlog id | Next item after close |
+| `worktree_status` | `none` / `active` | Git worktree lifecycle |
+| `worktree_path` | path | Active worktree directory |
+| `worktree_branch` | branch name | `loop/<loop_id>/<item-id>` |
+| `worktree_item_id` | backlog id | Must match IN_PROGRESS when active |
 | `loops` | text | Optional human note: last verify-wake result / arm pid |
 
-## Mandatory code-change trigger
+## Git worktree isolation (code items)
 
-**Code changed** = any diff under `pwa/`, `server/`, or instance bundle docs that affect ritual/state since tick start (committed or uncommitted).
+Each code-changing tick runs in an isolated worktree so windows do not commit on shared `main` concurrently.
+
+| Setting | Value |
+|---------|-------|
+| Path | `.worktrees/<loop_id>/` |
+| Branch | `loop/<loop_id>/<item-id>` |
+| Base | `main` |
+| Merge | rebase onto `main`, then `git merge --ff-only` |
+
+**Phase 3:** run `prepare_select_tick.sh`, then `instance_worktree.sh create --state-file` when item touches code.  
+**Phases 4–7:** run builds, commits, review inside `WORKTREE_PATH`.  
+**Phase 8:** `merge` then `remove --state-file`; set `worktree_status=none`.  
+**PO default:** docs-only ticks skip worktree.
+
+**Steady-state validation:** `validate_instance.py --strict-review` uses `--mode steady` — accepts completed `phase=9-arm` between ticks.
+
+Cannot arm (Phase 9) while `worktree_status=active`.
+
+```bash
+bash tools/cursor-loop/scripts/prepare_select_tick.sh . --state-file <STATE.md> --loop-id <loop_id>
+bash tools/cursor-loop/scripts/instance_worktree.sh status . --loop-id <loop_id>
+bash tools/cursor-loop/scripts/instance_worktree.sh create . --loop-id <loop_id> --item-id <id> --state-file <STATE.md>
+bash tools/cursor-loop/scripts/instance_worktree.sh merge . --loop-id <loop_id>
+bash tools/cursor-loop/scripts/instance_worktree.sh remove . --loop-id <loop_id> --state-file <STATE.md>
+```
+
+Add `.worktrees/` to project `.gitignore` before first create.
+
+
+**Code changed** = any diff under this window's **review scope** (see `review_scope.py` / Phase 5 prep output) since tick start (committed or uncommitted).
 
 At end of Phase 5, detect with:
 
 ```bash
-git diff --stat HEAD -- pwa/ server/
-git diff --stat --cached -- pwa/ server/
+bash tools/cursor-loop/scripts/prepare_review_tick.sh . \
+  --state-file docs/window-instances/<loop_id>/STATE.md \
+  --loop-id <loop_id> \
+  --apply
 ```
+
+Default scopes: worker/ux/code → app code paths (+ `tools/cursor-loop/` for code-health); PO → docs/backlog mutation paths; all windows include their instance bundle directory.
 
 | Condition | Required phases | `review_status` |
 |-----------|-----------------|-----------------|
-| `code_changed=yes` | Phase 6 `/code-review` **and** Phase 7 `/receiving-code-review` | `done` or `triaged` (never `skipped`) |
+| `code_changed=yes` | Phase 6 `/code-review` **and** Phase 7a `/receiving-code-review` + skill **and** Phase 7b backlog reflect | `done` or `triaged` (never `skipped`) |
 | `code_changed=no` (docs-only) | Phase 6/7 may skip | `skipped` + non-empty `review_skip_reason` |
 
 **Round N** = `CHECKPOINT.review_round`. Phase 6 logs findings with `source=round-{N}`; Phase 7 processes only those rows.
@@ -92,9 +131,11 @@ git diff --stat --cached -- pwa/ server/
 3. Cannot Phase 8 close if `code_changed=yes` and `review_status=pending`.
 4. Cannot Phase 8 close if `code_changed=yes` and no `REVIEW_FINDINGS` row with `source` containing `round-{N}` (includes zero-finding sentinel).
 5. Phase 7 must set each round-N finding `action` ∈ {fix-now, backlog, closed, pushback} and `status` ∈ {open, closed}.
-6. `fix-now` items from Phase 7 must be implemented before Phase 8 (re-verify in Phase 5 if needed).
-
-### Dynamic wake lifecycle
+6. `fix-now` items from Phase 7a must be implemented before Phase 8 (re-verify in Phase 5 if needed).
+7. Phase 7b **backlog reflect** — every `action=backlog` row must have `backlog_ref` pointing to a backlog entry with AC.
+8. **`review_changed_files` + `review_fingerprint`** must match live git diff at Phase 8 (re-run `--apply` if stale).
+9. Sentinel-only review (`*-rN-000`) rejected when changed files exist.
+10. Cannot Phase 8 close or arm while `worktree_status=active` (unmerged worktree).
 
 Dynamic mode (`loop_mode: dynamic`) uses one-shot `arm-wake.sh` per turn:
 

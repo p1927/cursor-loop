@@ -11,6 +11,20 @@ Read `../po-relay/STATE.md` `UI_PROPOSALS`; update `LAST_REVIEW`; `git status`.
 
 Top agreed `ui-*` from `UI_POLISH_BACKLOG`; resume `IN_PROGRESS` if set.
 
+**Worktree (code items):** mandatory prep then create before Phase 4:
+
+```bash
+bash tools/cursor-loop/scripts/prepare_select_tick.sh . \
+  --state-file docs/window-instances/ux-relay/STATE.md \
+  --loop-id ux-relay
+bash tools/cursor-loop/scripts/instance_worktree.sh create . \
+  --loop-id ux-relay \
+  --item-id <backlog-id> \
+  --state-file docs/window-instances/ux-relay/STATE.md
+```
+
+Phases 4–7 run inside `WORKTREE_PATH` (create auto-patches CHECKPOINT).
+
 ## Phase 4 — Execute
 
 1. Web research how reference app implements the target pattern
@@ -20,15 +34,15 @@ Top agreed `ui-*` from `UI_POLISH_BACKLOG`; resume `IN_PROGRESS` if set.
 
 ## Phase 5 — Verify
 
-**Build (required):**
-
 ```bash
 cd pwa && npm run build
-git diff --stat HEAD -- pwa/ server/
-git diff --stat --cached -- pwa/ server/
+bash tools/cursor-loop/scripts/prepare_review_tick.sh . \
+  --state-file docs/window-instances/ux-relay/STATE.md \
+  --loop-id ux-relay \
+  --apply
 ```
 
-Set `code_changed`; increment `review_round` if yes. Record `review_diff_range`.
+Apply script output: set `code_changed`, increment `review_round` if yes, set `review_status=pending`, record `review_diff_range`.
 
 **API (if server touched):**
 
@@ -58,19 +72,40 @@ python3 -c "import habits_api.main"
 
 Required when `code_changed=yes`.
 
-1. [`/code-review`](../../../.cursor/commands/code-review.md) on UI diff + 390px visual parity vs IDENTITY matrix
+**Mandatory:** Invoke [`/code-review`](../../../.cursor/commands/code-review.md) — read the full command file first. Announce: "Using /code-review to review Round N."
+
+1. Run `/code-review` on UI diff + 390px visual parity vs IDENTITY matrix
 2. Log findings as `ux-r{N}-{seq}` with `source=round-{N}`
 3. Zero issues → sentinel `ux-r{N}-000`
 
-## Phase 7 — Receive review (Round N)
+## Phase 7 — Receive + backlog reflect (Round N)
 
 Required when `code_changed=yes`.
 
-1. [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md) on round-N rows
-2. Implement fix-now UI fixes; re-verify build + 390px if needed
+### Phase 7a — Receive (mandatory skill + command)
+
+Read Superpowers **receiving-code-review** skill, then invoke [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md).
+
+1. Triage every round-N row: `fix-now` | `backlog` | `closed` | `pushback`
+2. Implement fix-now in worktree / `pwa/`; re-verify build + 390px if needed
 3. Also triage `UI_PROPOSALS`; log `UX_GAPS` for PO if new gaps found
 
+### Phase 7b — Backlog reflect (mandatory)
+
+Every deferred finding → backlog row with id, priority, AC. Set `backlog_ref` on the REVIEW_FINDINGS row. Create `ui-*` items in UI_POLISH_BACKLOG for deferred findings. Cannot close until complete.
+
 ## Phase 8 — Close
+
+When `worktree_status=active`:
+
+```bash
+bash tools/cursor-loop/scripts/instance_worktree.sh merge . --loop-id ux-relay \
+  --apply
+bash tools/cursor-loop/scripts/instance_worktree.sh remove . --loop-id ux-relay \
+  --apply
+```
+
+Then set `worktree_status=none` and clear worktree path/branch/item fields.
 
 HISTORY, CHECKPOINT, backlog checkboxes.
 

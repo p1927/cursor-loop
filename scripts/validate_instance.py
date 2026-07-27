@@ -18,7 +18,17 @@ REQUIRED_STATE_SECTIONS = (
     "HISTORY",
 )
 REQUIRED_CHECKPOINT_FIELDS = ("phase", "review_status")
-V2_CHECKPOINT_FIELDS = ("review_round", "code_changed")
+V2_CHECKPOINT_FIELDS = (
+    "review_round",
+    "code_changed",
+    "last_reviewed_round",
+    "worktree_status",
+    "worktree_path",
+    "worktree_branch",
+    "worktree_item_id",
+    "review_changed_files",
+    "review_fingerprint",
+)
 VALID_ARCHETYPES = frozenset({"engineer", "designer", "product", "qa"})
 VALID_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
 VALID_ACTIONS = frozenset({"fix-now", "backlog", "closed", "pushback", "open", "—", "-"})
@@ -64,6 +74,44 @@ def parse_review_findings_rows(state_text: str) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def parse_checkpoint_fields(state_text: str) -> set[str]:
+    fields: set[str] = set()
+    if "## CHECKPOINT" not in state_text:
+        return fields
+    section = state_text.split("## CHECKPOINT", 1)[1]
+    if "\n## " in section:
+        section = section.split("\n## ", 1)[0]
+    for line in section.splitlines():
+        if "|" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3 and parts[1]:
+            key = parts[1].strip("`")
+            if key.lower() not in ("field", "-------"):
+                fields.add(key)
+    return fields
+
+
+def template_checkpoint_fields(root: Path, manifest: dict) -> set[str]:
+    wi_root = root / manifest["package_root"] / "window-instances"
+    template_path = wi_root / "_template" / "STATE.md"
+    if not template_path.is_file():
+        return set()
+    return parse_checkpoint_fields(template_path.read_text(encoding="utf-8"))
+
+
+def validate_template_checkpoint(
+    root: Path, loop_id: str, state_path: Path, required: set[str]
+) -> list[str]:
+    if not required or not state_path.is_file():
+        return []
+    present = parse_checkpoint_fields(state_path.read_text(encoding="utf-8"))
+    missing = sorted(required - present)
+    if not missing:
+        return []
+    return [f"{loop_id}: CHECKPOINT missing template fields: {', '.join(missing)}"]
 
 
 def instance_version_from_bundle(bundle: Path) -> int:
@@ -142,8 +190,12 @@ def validate_bundle(root: Path, bundle_rel: str, entry: dict) -> list[str]:
         if version >= 2:
             if "/code-review" not in ritual:
                 warnings.append(f"{loop_id}: RITUAL.md should reference /code-review")
-            if "/receiving-code-review" not in ritual:
+            if "receiving-code-review" not in ritual:
                 warnings.append(f"{loop_id}: RITUAL.md should reference /receiving-code-review")
+            if "Phase 7b" not in ritual and "Backlog reflect" not in ritual:
+                warnings.append(f"{loop_id}: RITUAL.md should reference Phase 7b backlog reflect")
+            if "instance_worktree" not in ritual and "worktree" not in ritual.lower():
+                warnings.append(f"{loop_id}: RITUAL.md should reference worktree lifecycle")
 
     for w in warnings:
         print(f"WARN: {w}", file=sys.stderr)
@@ -213,10 +265,31 @@ def main() -> int:
         action="store_true",
         help="Fail if ritual gate fails for any instance STATE",
     )
+    parser.add_argument(
+        "--strict-template",
+        action="store_true",
+        help="Fail if live STATE CHECKPOINT missing fields from _template/STATE.md",
+    )
     args = parser.parse_args()
 
     root = Path(args.project).resolve()
     errors = validate_all_instances(root)
+
+    if args.strict_template:
+        try:
+            manifest = mod.load_manifest(root)
+            required = template_checkpoint_fields(root, manifest)
+        except (FileNotFoundError, ValueError, KeyError):
+            required = set()
+        inst_manifest = load_instances_manifest(root)
+        for entry in inst_manifest.get("instances") or []:
+            loop_id = entry.get("loop_id", "")
+            state_rel = entry.get("state_file", "")
+            if not state_rel:
+                continue
+            errors.extend(
+                validate_template_checkpoint(root, loop_id, root / state_rel, required)
+            )
 
     if args.strict_review:
         import subprocess
@@ -245,7 +318,7 @@ def main() -> int:
                     "--state-file",
                     state_file,
                     "--mode",
-                    "arm",
+                    "steady",
                 ],
                 cwd=root,
                 capture_output=True,

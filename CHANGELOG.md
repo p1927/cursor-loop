@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.5.8
+
+- **`--mode steady`** — `validate_instance.py --strict-review` accepts completed `phase=9-arm` between ticks
+- **Arm recovery** — `phase=9-arm` normalizes to `8-close` for `arm-wake.sh` gate (prior cycle complete)
+- **`prepare_select_tick.sh`** — Phase 3 worktree requirement detection by archetype + IN_PROGRESS
+- **`instance_worktree.sh create --state-file`** — auto-patches CHECKPOINT worktree fields
+- **Phase 4–7 gate** — engineer/designer/qa require active worktree when item selected
+- **`git_root_for_checkpoint`** — review diff scoped to active worktree path
+- **Wake JSON** — `worktree_command` when worktree required; doctor warns on main-scope diff without worktree
+- **Live STATE** — consolidated CHECKPOINT tables (worktree fields inline)
+
+## 0.5.7
+
+- **Git-derived file manifest** — `list_changed_files`, `files_fingerprint`, `manifest_matches_git` in `review_scope.py`
+- **`prepare_review_tick.sh --apply`** — writes `review_changed_files` + `review_fingerprint` to CHECKPOINT
+- **Hard gates** — manifest must match live git at Phase 8; rejects sentinel-only review when changed files exist
+- **Stop hook review gate** — `review_stop_needed()` emits followup at Phase 5+ even when wake=ARMED, with enumerated `changed_files`
+- **Wake JSON** — includes `review_paths`, `changed_files`, `review_fingerprint`, `review_diff_range`
+- **Templates + commands synced** — `_template` STATE/SPEC/RITUAL, `/code-review`, `/receiving-code-review`, 8 presets, live `docs/window-instances/*`
+- **Tests** — manifest, gate, stop hook, `--apply` segments
+
+## 0.5.6
+
+- **Mandatory review skills** — Phase 6 must invoke `/code-review` command (read full file); Phase 7a must read Superpowers **receiving-code-review** skill then `/receiving-code-review`
+- **Phase 7b Backlog reflect** — deferred/low-priority findings must become backlog rows with id + AC + `backlog_ref`; gated in `ritual_phase.py`
+- **Wake prompt** — notes for skill + 7b when git diff present
+- **Templates + live instances synced** — `_template`, 8 presets, `docs/window-instances/*`; fixed corrupted RITUAL headers from worktree batch
+
+## 0.5.5
+
+- **Git worktree isolation** — per-window worktrees at `.worktrees/<loop_id>/`, branch `loop/<loop_id>/<item-id>`
+- **`instance_worktree.sh`** — create | status | merge | remove | prune (rebase + ff-only merge)
+- **Phase gates** — cannot arm or close while `worktree_status=active`
+- **`migrate_state_checkpoint.py`** — additive CHECKPOINT field migration from `_template/STATE.md`
+- **`cwin worktree-status`**, **`cwin worktree-prune`**, **`cwin template-check`**; `cwin sync` runs migrate
+- **Templates** — worktree fields in STATE/SPEC/RITUAL.base; 8 preset RITUAL/IDENTITY synced
+- **`.gitignore`** — add `.worktrees/` (required before first create)
+
+## 0.5.4
+
+- **Window-scoped review paths** — `review_scope.py` replaces hard-coded `pwa/`/`server/` filter; each loop reviews all changes in its territory
+- **code-health** scope includes `tools/cursor-loop/` (loop package changes now trigger Phase 6)
+- **PO** scope includes docs/backlog paths; PO Phase 6 still adds `main...HEAD` on app code per RITUAL
+- **`detect_code_changed.sh`** — accepts `--loop-id` and `--state-file`; delegates to `review_scope.py`
+- **`audit_review.py`** — stale check uses `round < last_reviewed` (not `<=`) when git diff present with findings
+
+## 0.5.3
+
+- **`prepare_review_tick.sh`** — Phase 5 prep: detect git diff, suggest `review_round` bump, set `review_status=pending`
+- **Fresh-review gate** — `ritual_phase.py` rejects stale `review_status=done` when git diff exists or `review_round <= last_reviewed_round`
+- **Wake prompt** — mandatory `/code-review` + `/receiving-code-review` when git diff non-empty (not only stale CHECKPOINT)
+- **`last_reviewed_round`** — new CHECKPOINT field; set at Phase 7 completion
+- **`cwin audit-review`** — compare HISTORY vs REVIEW_FINDINGS; report ticks that shipped code without review
+- **RITUAL Phase 5** — all presets call `prepare_review_tick.sh`
+
 ## 0.5.2
 
 - **Strict phase line** — `ritual_phase.py` state machine; phases 1→9 sequential, no jumps

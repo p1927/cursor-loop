@@ -22,9 +22,11 @@ Every wake **starts at Phase 1** (`1-wake`). Advance **one phase at a time** onl
 
 `1-wake → 2-orient → 3-select → 4-execute → 5-verify → 6-review → 7-triage → 8-close → 9-arm`
 
-**Forbidden:** jumping phases (e.g. `4-execute` → `9-arm`); setting `phase=9-arm` before `8-close`; arming when `validate_ritual_gate.py` fails.
+**Forbidden:** jumping phases (e.g. `4-execute` → `9-arm`); setting `phase=9-arm` before `verify-wake.sh` passes; arming when `validate_ritual_gate.py` fails.
 
-On wake: set `CHECKPOINT.phase=1-wake` immediately, then walk the line. Run `detect_code_changed.sh` in Phase 5.
+**Between ticks:** `phase=9-arm` is valid steady state. Every new wake resets to `1-wake`.
+
+On wake: set `CHECKPOINT.phase=1-wake` immediately, then walk the line. Phase 3: run `prepare_select_tick.sh` then `instance_worktree.sh create` when required — **cannot enter Phase 4** without active worktree (engineer/designer/qa). Phase 5: run `prepare_review_tick.sh --apply`.
 
 ## 9-phase ritual (all windows)
 
@@ -40,15 +42,19 @@ On wake: set `CHECKPOINT.phase=1-wake` immediately, then walk the line. Run `det
 | 8 | Close |
 | 9 | Arm |
 
+**Worktree (code items):** Phase 3 runs `prepare_select_tick.sh` + creates `.worktrees/<loop_id>/`; Phases 4–7 run there; Phase 8 merges to `main` then removes worktree. See [`RITUAL.base.md`](../../docs/window-instances/_template/RITUAL.base.md).
+
 Update `CHECKPOINT.phase` after each phase. Spec: [`docs/window-instances/_template/SPEC.md`](../../docs/window-instances/_template/SPEC.md).
 
 ## Mandatory review cycle
 
-After Phase 5, set `CHECKPOINT.code_changed` via git diff on `pwa/` and `server/`.
+After Phase 5, set `CHECKPOINT.code_changed` via **window-scoped** git diff (`prepare_review_tick.sh --apply` writes `review_changed_files` + `review_fingerprint`).
+
+Wake JSON includes `changed_files` when diff exists at wake start — **must read every listed file** before Phase 8.
 
 | `code_changed` | Required |
 |----------------|----------|
-| `yes` | Phase 6 [`/code-review`](../../.cursor/commands/code-review.md) then Phase 7 [`/receiving-code-review`](../../.cursor/commands/receiving-code-review.md) on Round N |
+| `yes` | Phase 6 [`/code-review`](../../.cursor/commands/code-review.md) → Phase 7a Superpowers **receiving-code-review** skill + [`/receiving-code-review`](../../.cursor/commands/receiving-code-review.md) → Phase 7b backlog reflect |
 | `no` | Skip with `review_status=skipped` + `review_skip_reason` |
 
 **Round N** = `CHECKPOINT.review_round`. Phase 6 logs findings with `source=round-{N}`; Phase 7 processes only those rows.
@@ -61,6 +67,7 @@ Cannot arm (Phase 9) if `code_changed=yes` and round-N findings are untriaged.
 
 - `CHECKPOINT.phase` is before `8-close`
 - `CHECKPOINT.review_status` is `pending`
+- `worktree_status=active` (unmerged worktree)
 - `code_changed=yes` and no REVIEW_FINDINGS row with `source` containing `round-{N}`
 
 **Allowed skip:** set `review_status=skipped` with non-empty `review_skip_reason` (docs-only ticks).
@@ -78,7 +85,7 @@ Log findings in STATE `REVIEW_FINDINGS` table:
 - Action: `fix-now` | `backlog` | `closed` | `pushback`
 - Status: `open` | `closed`
 
-Triage each round-N row in Phase 7 before Phase 8 close.
+Triage each round-N row in Phase 7a. Complete Phase 7b backlog reflect before Phase 8 close.
 
 ## Isolation
 

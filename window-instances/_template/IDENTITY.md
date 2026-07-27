@@ -14,8 +14,9 @@
 
 ## Code review cycle (mandatory on code-changing ticks)
 
-- **Phase 6:** [`/code-review`](../../../.cursor/commands/code-review.md) — log findings to REVIEW_FINDINGS with `source=round-{N}`
-- **Phase 7:** [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md) — verify and act on round-N findings (Superpowers receiving-code-review skill)
+- **Phase 6:** Invoke [`/code-review`](../../../.cursor/commands/code-review.md) — read full command; log findings with `source=round-{N}` (no freestyle review)
+- **Phase 7a:** Read Superpowers **receiving-code-review** skill, then invoke [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md)
+- **Phase 7b:** Backlog reflect — every deferred finding → backlog row with id + AC + `backlog_ref`
 
 ## Reference docs
 

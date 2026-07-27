@@ -149,6 +149,7 @@ for entry in instances:
         review = cp.get("review_status", "?")
         code_changed = cp.get("code_changed", "no").lower()
         review_round = cp.get("review_round", "0")
+        worktree = cp.get("worktree_status", "none")
         open_items = count_open_backlog(state_text)
         wake = wake_status(loop_id)
         stale = persistent_status(loop_id)
@@ -168,9 +169,51 @@ for entry in instances:
         if phase_num >= 9 and "DOWN" in wake:
             status = "WARN"
             notes.append("phase=9-arm but wake DOWN — re-arm required")
+        if worktree == "active":
+            status = "WARN"
+            notes.append("worktree_status=active — merge+remove before arm")
+        archetype = entry.get("archetype", "")
+        code_paths = ["pwa/", "server/"]
+        if loop_id == "ux-relay":
+            code_paths = ["pwa/"]
+        elif loop_id == "code-health":
+            code_paths = ["pwa/", "server/", "tools/cursor-loop/"]
+        elif loop_id == "po-relay":
+            code_paths = []
+        if archetype in ("engineer", "designer", "qa") and worktree == "none" and code_paths:
+            try:
+                import subprocess
+                for spec in code_paths:
+                    r = subprocess.run(
+                        ["git", "diff", "--quiet", "HEAD", "--", spec],
+                        cwd=root,
+                        capture_output=True,
+                    )
+                    if r.returncode == 1:
+                        status = "WARN"
+                        notes.append(
+                            f"scope diff on main ({spec}) without worktree — create in Phase 3"
+                        )
+                        break
+            except Exception:
+                pass
+        wt_script = scripts_dir / "instance_worktree.py"
+        if wt_script.is_file():
+            try:
+                sys.path.insert(0, str(scripts_dir))
+                import worktree_lib as wt
+                disk = wt.worktree_entry(root, loop_id)
+                if disk and worktree != "active":
+                    status = "WARN"
+                    notes.append(f"orphan git worktree on disk ({disk.get('branch', '?')})")
+                if not disk and worktree == "active":
+                    status = "WARN"
+                    notes.append("CHECKPOINT worktree_status=active but no git worktree")
+            except Exception:
+                pass
         print(
             f"{loop_id:16} {status:4}  phase={phase:12} review={review:8} "
-            f"code_changed={code_changed:3} round={review_round:3} "
+            f"code_changed={code_changed:3} round={review_round:3} worktree={worktree:6} "
             f"backlog_open={open_items:2}  wake={wake}"
         )
         if notes:

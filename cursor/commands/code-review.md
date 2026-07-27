@@ -2,15 +2,42 @@
 
 Review the current branch changes or uncommitted diff with a critical eye.
 
-## Mandatory
+## Mandatory invocation (Phase 6)
+
+**You MUST invoke this Cursor command in Phase 6** — read this entire file first; do not freestyle review or substitute ad-hoc checklists.
+
+Announce: **"Using /code-review to review Round N diff"** then follow the process below.
 
 **Required on every code-changing tick** in all window instances (`worker-relay`, `ux-relay`, `code-health`, `po-relay`) before Phase 8 close.
 
-Trigger: `CHECKPOINT.code_changed=yes` (set at end of Phase 5).
+Trigger: `CHECKPOINT.code_changed=yes` (set at end of Phase 5 via `prepare_review_tick.sh`).
 
-If no code diff under `pwa/` or `server/` → skip with `review_status=skipped` and `review_skip_reason`.
+If no diff in **this window's review scope** → skip with `review_status=skipped` and `review_skip_reason`.
 
 Phase 7 **must** follow with [`/receiving-code-review`](receiving-code-review.md) on the same Round N.
+
+## Review scope (per window)
+
+Review **all changes this window made** — not a global `pwa/`/`server/` filter unless that is the window's scope.
+
+Run Phase 5 prep to print paths:
+
+```bash
+bash tools/cursor-loop/scripts/prepare_review_tick.sh . \
+  --state-file <STATE.md> --loop-id <loop_id> \
+  --apply
+```
+
+| Window | Default review paths |
+|--------|----------------------|
+| worker-relay | `pwa/`, `server/`, instance bundle |
+| ux-relay | `pwa/`, instance bundle |
+| code-health | `pwa/`, `server/`, `tools/cursor-loop/`, instance bundle |
+| po-relay | `docs/window-instances/po-relay/`, maintenance/agents docs, instance bundle |
+
+Phase 6 `/code-review` must cover the full diff on those paths (use `CHECKPOINT.review_diff_range` + `git diff` with the printed `review_paths`).
+
+**PO exception:** When reviewing shipped product code (typical every tick), also run `git diff main...HEAD` on `pwa/` and `server/` per [`po-relay/RITUAL.md`](../../docs/window-instances/po-relay/RITUAL.md) — that is additive to PO's own doc mutations.
 
 ## Focus areas
 
@@ -22,10 +49,14 @@ Phase 7 **must** follow with [`/receiving-code-review`](receiving-code-review.md
 
 ## Process
 
-1. Run `git diff` (or `git diff main...HEAD` for branch review) on `CHECKPOINT.review_diff_range`
-2. Read changed files in context — not just the diff hunks
-3. List findings by severity: critical, high, medium, low
-4. For each finding: file path, issue, suggested fix
+0. If `CHECKPOINT.review_changed_files` is empty or stale vs git, run Phase 5 prep with `--apply` first.
+1. Read `review_paths` and `CHECKPOINT.review_changed_files` from Phase 5 prep (or wake JSON `changed_files`).
+2. Run `git diff --name-only` on `review_paths`; **open and read every file** in `changed_files`.
+3. Read changed files in full context — not just diff hunks.
+4. List findings by severity: critical, high, medium, low.
+5. For each finding: cite `path:line` (or file-level for config/docs), issue, suggested fix.
+
+**Sentinel rule:** `{prefix}-r{N}-000` is allowed **only** when `changed_files` is empty. Arm gate and stop hook reject sentinel-only review when files changed.
 
 ## Round numbering
 
@@ -74,8 +105,8 @@ Add 390px visual check per [`ux-relay/RITUAL.md`](../../docs/window-instances/ux
 
 ## Code window
 
-Focus on structure, DRY, naming clarity, patchwork vs root-cause fixes.
+Focus on structure, DRY, naming clarity, patchwork vs root-cause fixes. Include `tools/cursor-loop/` when this window changed loop package code.
 
 ## Next step
 
-After logging findings, proceed to Phase 7 [`/receiving-code-review`](receiving-code-review.md) for the same Round N.
+After logging findings, proceed to **Phase 7a** — read the Superpowers **receiving-code-review** skill and invoke [`/receiving-code-review`](receiving-code-review.md) for the same Round N, then complete **Phase 7b Backlog reflect** (mandatory).

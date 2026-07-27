@@ -160,7 +160,25 @@ def cmd_sync(project: Path) -> int:
     rc = cmd_install(project, preset)
     if rc:
         return rc
+    migrate = scripts_dir(project) / "migrate_state_checkpoint.py"
+    if migrate.is_file():
+        subprocess.call(["python3", str(migrate), str(project), "--apply"], cwd=project)
     return cmd_refresh(project, None)
+
+
+def cmd_worktree(project: Path, subcmd: str, loop_id: str, item_id: str) -> int:
+    script = scripts_dir(project) / "instance_worktree.sh"
+    cmd = ["bash", str(script), subcmd, str(project), "--loop-id", loop_id]
+    if item_id:
+        cmd.extend(["--item-id", item_id])
+    return subprocess.call(cmd, cwd=project)
+
+
+def cmd_template_check(project: Path) -> int:
+    return subprocess.call(
+        ["python3", str(scripts_dir(project) / "validate_instance.py"), str(project), "--strict-template"],
+        cwd=project,
+    )
 
 
 def cmd_validate(project: Path) -> int:
@@ -171,6 +189,16 @@ def cmd_validate(project: Path) -> int:
 
 def cmd_doctor(project: Path) -> int:
     return subprocess.call(["bash", str(scripts_dir(project) / "doctor.sh"), str(project)], cwd=project)
+
+
+def cmd_audit_review(project: Path, loop_id: str | None, as_json: bool) -> int:
+    script = scripts_dir(project) / "audit_review.py"
+    cmd = ["python3", str(script), str(project)]
+    if loop_id:
+        cmd.extend(["--loop-id", loop_id])
+    if as_json:
+        cmd.append("--json")
+    return subprocess.call(cmd, cwd=project)
 
 
 def cmd_install(project: Path, preset: str | None) -> int:
@@ -197,7 +225,14 @@ def main() -> int:
     sub.add_parser("validate")
     sub.add_parser("doctor")
     sub.add_parser("refresh")
+    p = sub.add_parser("audit-review", help="Compare HISTORY vs REVIEW_FINDINGS for skipped reviews")
+    p.add_argument("--loop-id", default="")
+    p.add_argument("--json", action="store_true")
     sub.add_parser("sync", help="Re-link rules/instances from package + kill stale loops")
+    sub.add_parser("template-check", help="Fail if live STATE missing template CHECKPOINT fields")
+    p = sub.add_parser("worktree-status", help="Show worktree status for one loop")
+    p.add_argument("loop_id")
+    sub.add_parser("worktree-prune", help="Remove merged loop worktrees")
     p = sub.add_parser("paste")
     p.add_argument("loop_id")
     p = sub.add_parser("bootstrap")
@@ -223,8 +258,14 @@ def main() -> int:
         "presets": lambda: cmd_presets(project),
         "validate": lambda: cmd_validate(project),
         "doctor": lambda: cmd_doctor(project),
+        "audit-review": lambda: cmd_audit_review(
+            project, args.loop_id or None, getattr(args, "json", False)
+        ),
         "refresh": lambda: cmd_refresh(project, None),
         "sync": lambda: cmd_sync(project),
+        "template-check": lambda: cmd_template_check(project),
+        "worktree-status": lambda: cmd_worktree(project, "status", args.loop_id, ""),
+        "worktree-prune": lambda: cmd_worktree(project, "prune", "", ""),
         "stop": lambda: cmd_refresh(project, None if args.all or not args.loop_id else args.loop_id),
         "bootstrap": lambda: cmd_bootstrap(project, args.preset, args.mode, args.refresh),
         "install": lambda: cmd_install(project, args.preset or None),

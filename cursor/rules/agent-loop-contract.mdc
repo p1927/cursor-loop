@@ -114,7 +114,7 @@ Rules:
 
 - **Follow-up turns are not exempt** from the end-of-turn gate.
 - Always run **`verify-wake.sh` fresh** — never treat stale terminal `WAKE_ARMED pid=…` as proof of a live sleeper.
-- `instance-doctor` showing `wake=ARMED` between turns is healthy; sustained `wake=DOWN` at `phase=9-arm` means re-arm was skipped.
+- `instance-doctor` showing `wake=ARMED` between turns is healthy; `phase=9-arm` between ticks is valid steady state (next wake starts at `1-wake`); sustained `wake=DOWN` at end of turn means re-arm was skipped.
 
 ---
 
@@ -177,6 +177,7 @@ Rules:
 - Ignore all foreign `AGENT_LOOP_*` lines
 - Read/update **only** your contract's `state_file` for backlog, checkpoint, and history
 - Do not summarize or act on another loop's backlog in this chat
+- **Code items:** use git worktree at `.worktrees/<loop_id>/` — never commit app code on `main` while `worktree_status=active` in your STATE
 
 ---
 

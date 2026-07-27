@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import review_scope as rs
 import ritual_phase as rp
 
 VALID_LOOP_MODES = frozenset({"dynamic", "persistent", "external"})
@@ -64,7 +65,17 @@ def parse_checkpoint_phase(state_path: Path) -> str:
     return rp.parse_checkpoint_table(text).get("phase", "1-wake") or "1-wake"
 
 
-def mandatory_commands(checkpoint: dict[str, str]) -> list[str]:
+def mandatory_commands(
+    checkpoint: dict[str, str],
+    project_root: Path | None = None,
+    loop_id: str = "",
+    state_file: str = "",
+    archetype: str = "",
+) -> tuple[list[str], list[str], str]:
+    """Return (commands, extra_notes, worktree_command) for wake prompt."""
+    git_diff = project_root is not None and rp.git_has_code_changes(
+        project_root, loop_id, state_file, checkpoint
+    )
     code_changed = (checkpoint.get("code_changed") or "no").strip().strip("`").lower() in (
         "yes",
         "true",
@@ -72,12 +83,51 @@ def mandatory_commands(checkpoint: dict[str, str]) -> list[str]:
     )
     review_status = (checkpoint.get("review_status") or "pending").strip().strip("`").lower()
     cmds: list[str] = []
-    if code_changed and review_status == "pending":
-        cmds.append("/code-review")
-    if code_changed and review_status in ("pending", "done"):
-        if review_status == "done":
+    notes: list[str] = []
+    worktree_cmd = ""
+
+    item_id = ""
+    if project_root and state_file:
+        state_path = project_root / state_file
+        if state_path.is_file():
+            state_text = state_path.read_text(encoding="utf-8")
+            item_id = rp.parse_current_item_id(state_text, checkpoint)
+
+    worktree_status = (checkpoint.get("worktree_status") or "none").strip().strip("`").lower()
+    on_disk = project_root is not None and rp.worktree_on_disk(project_root, loop_id)
+    if rp.requires_worktree(archetype) and item_id and (worktree_status != "active" or not on_disk):
+        pkg = "tools/cursor-loop/scripts"
+        worktree_cmd = (
+            f"bash {pkg}/prepare_select_tick.sh . --state-file {state_file} --loop-id {loop_id}; "
+            f"bash {pkg}/instance_worktree.sh create . --loop-id {loop_id} "
+            f"--item-id {item_id} --state-file {state_file}"
+        )
+        notes.append(
+            "Phase 3 MANDATORY: run prepare_select_tick.sh then instance_worktree.sh create "
+            "before any pwa/server edits"
+        )
+
+    if git_diff:
+        notes.append("review_status must be pending until Phase 6 /code-review completes")
+        notes.append(
+            "Phase 7: read receiving-code-review skill, then /receiving-code-review; "
+            "complete 7b backlog reflect"
+        )
+        notes.append("MUST read every path in changed_files before Phase 8")
+        cmds.extend(["/code-review", "/receiving-code-review"])
+    elif code_changed:
+        if review_status == "pending":
+            cmds.append("/code-review")
+        elif review_status == "done":
             cmds.append("/receiving-code-review")
-    return cmds
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for cmd in cmds:
+        if cmd not in seen:
+            seen.add(cmd)
+            deduped.append(cmd)
+    return deduped, notes, worktree_cmd
 
 
 def banner_for(loop_id: str, entry: dict | None) -> str:
@@ -111,6 +161,8 @@ def build_prompt(
         bundle_hint = f"Bundle: {entry['bundle']}/"
     elif contract_doc:
         bundle_hint = str(Path(contract_doc).parent)
+
+    archetype = (entry.get("archetype") or "") if entry else ""
 
     parts = [banner]
     if bundle_hint:
@@ -146,9 +198,38 @@ def build_prompt(
     if criteria:
         parts.append(f"Phase {allowed_phase} exit: {'; '.join(criteria[:3])}")
 
-    cmds = mandatory_commands(checkpoint)
+    cmds, cmd_notes, worktree_cmd = mandatory_commands(
+        checkpoint,
+        root if root else None,
+        loop_id,
+        state_file,
+        archetype,
+    )
+    for note in cmd_notes:
+        parts.append(note)
+    if worktree_cmd:
+        parts.append(f"worktree_command={worktree_cmd}")
     if cmds:
-        parts.append(f"MANDATORY commands this turn if applicable: {', '.join(cmds)}")
+        parts.append(f"MANDATORY commands this turn: {', '.join(cmds)}")
+
+    review_paths: list[str] = []
+    changed_files: list[str] = []
+    review_fingerprint = ""
+    review_diff_range = "none"
+    git_root = root
+    if root and state_file:
+        git_root = rp.git_root_for_checkpoint(root, checkpoint)
+        review_paths = rs.review_paths(loop_id, state_file)
+        if rp.git_has_code_changes(root, loop_id, state_file, checkpoint):
+            changed_files = rs.list_changed_files(git_root, review_paths)
+            review_fingerprint = rs.files_fingerprint(changed_files)
+            review_diff_range = rs.git_diff_range_label(git_root, review_paths)
+            parts.append(f"review_paths={' '.join(review_paths)}")
+            if changed_files:
+                shown = changed_files[:15]
+                suffix = f" (+{len(changed_files) - 15} more)" if len(changed_files) > 15 else ""
+                parts.append(f"changed_files={' '.join(shown)}{suffix}")
+                parts.append(f"review_fingerprint={review_fingerprint}")
 
     parts.append("follow CHECKPOINT.confirmed_next; run Ritual deliverable this turn")
     if recovery:
@@ -172,6 +253,12 @@ def build_prompt(
         "review_status": checkpoint.get("review_status", "pending"),
         "review_round": checkpoint.get("review_round", "0"),
         "mandatory_commands": cmds,
+        "worktree_command": worktree_cmd,
+        "archetype": archetype,
+        "review_paths": review_paths,
+        "changed_files": changed_files,
+        "review_fingerprint": review_fingerprint,
+        "review_diff_range": review_diff_range,
         "prompt": "; ".join(parts) + ".",
     }
     return json.dumps(payload)

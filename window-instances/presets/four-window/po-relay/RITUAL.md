@@ -25,7 +25,7 @@ Run **three separate lens sessions**; append each to `BRAINSTORM_LOG` with tag.
 - RICE top 5 candidates
 - Merge duplicates; drop vague items
 - Rewrite AC as Given/When/Then
-- Feed `task-*` to `worker-relay/STATE.md` BACKLOG
+- Feed `relay-*` to `worker-relay/STATE.md` BACKLOG
 
 ### Business owner lens
 
@@ -39,8 +39,10 @@ Run **three separate lens sessions**; append each to `BRAINSTORM_LOG` with tag.
 Log all three lenses in `BRAINSTORM_LOG` with timestamp. At least one backlog mutation (not read-only).
 
 ```bash
-git diff --stat HEAD -- pwa/ server/
-git diff --stat --cached -- pwa/ server/
+bash tools/cursor-loop/scripts/prepare_review_tick.sh . \
+  --state-file docs/window-instances/po-relay/STATE.md \
+  --loop-id po-relay \
+  --apply
 ```
 
 Set `code_changed` (usually `no` for PO — PO does not ship code). If reviewing others' shipped code in Phase 6, set `review_diff_range` to branch range (e.g. `main...HEAD`).
@@ -49,9 +51,11 @@ Set `code_changed` (usually `no` for PO — PO does not ship code). If reviewing
 
 Run when reviewing shipped code (typical every tick) OR when `code_changed=yes`.
 
+**Mandatory:** Invoke [`/code-review`](../../../.cursor/commands/code-review.md) — read the full command file first. Announce: "Using /code-review to review Round N."
+
 1. `git log -10 --oneline` + `git diff main...HEAD --stat`
 2. Skim `pwa/src/` and `server/` (read-only)
-3. [`/code-review`](../../../.cursor/commands/code-review.md) with PO lens: missing features, weak AC, RICE, cross-feed
+3. Run `/code-review` with PO lens: missing features, weak AC, RICE, cross-feed
 4. Validate `UI_PROPOSALS`; read `ux-relay/STATE.md` `UX_GAPS`
 5. Cross-check `worker-relay/STATE.md` BACKLOG vs shipped code
 
@@ -60,22 +64,32 @@ Log **all** output as REVIEW_FINDINGS rows (`pr-r{N}-{seq}`, `source=round-{N}`)
 Categories to cover each tick:
 
 - Shipped vs backlog
-- Missing features (`task-*`)
+- Missing features (`relay-*`)
 - UI proposals (`prop-ui-*`)
 - Quality flags (`maint-*` / `ch-*`)
 - AC gaps
 
 Zero issues → sentinel `pr-r{N}-000`.
 
-## Phase 7 — Receive review (Round N)
+## Phase 7 — Receive + backlog reflect (Round N)
 
-1. [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md) on round-N rows
-2. Route valid findings: fix-now (handoff note) | target window backlog | closed | pushback
-3. Do not implement code — feed Worker, UX, Code backlogs
+Required when `code_changed=yes`.
 
-Also route: `UI_PROPOSALS` triage, `UX_GAPS` promotion where agreed.
+### Phase 7a — Receive (mandatory skill + command)
+
+Read Superpowers **receiving-code-review** skill, then invoke [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md).
+
+1. Triage every round-N row: `fix-now` | `backlog` | `closed` | `pushback`
+2. Do not ship code — route fix-now handoffs as notes to target windows
+
+### Phase 7b — Backlog reflect (mandatory)
+
+Every deferred finding → backlog row with id, priority, AC. Set `backlog_ref` on the REVIEW_FINDINGS row. Cannot close until complete.
+Route to worker BACKLOG (`relay-*`), UI_PROPOSALS (`prop-ui-*`), or QUALITY_BACKLOG (`maint-*`, `ch-*`).
 
 ## Phase 8 — Close
+
+**Worktree:** docs-only ticks keep `worktree_status=none`. If mutating code paths, create worktree per [`RITUAL.base.md`](../_template/RITUAL.base.md) Phase 3.
 
 Update CHECKPOINT, HISTORY, promote `UX_GAPS` → `UI_PROPOSALS` where agreed.
 

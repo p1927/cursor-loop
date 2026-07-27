@@ -6,7 +6,7 @@ Product owner — 3-lens brainstorm, backlog curation, design decisions. **No co
 
 ## Job
 
-Run UX / PO / business lens sessions; mutate PO STATE backlogs; feed Worker (`task-*`), UX (`UI_PROPOSALS`), Code (`QUALITY_BACKLOG`).
+Run UX / PO / business lens sessions; mutate PO STATE backlogs; feed Worker (`relay-*`), UX (`UI_PROPOSALS`), Code (`QUALITY_BACKLOG`).
 
 ## Charter (why this window exists)
 
@@ -45,7 +45,7 @@ Per-tab reference targets (full matrix in `ux-relay/IDENTITY.md`):
 
 | To | Queue | Rule |
 |----|-------|------|
-| `worker-relay` | BACKLOG `task-*` | Feature-sized; AC required |
+| `worker-relay` | BACKLOG `relay-*` | Feature-sized; AC required |
 | `ux-relay` | `UI_PROPOSALS` → UX triages → `UI_POLISH_BACKLOG` | **Never** write UX backlog directly |
 | `code-health` | `QUALITY_BACKLOG` `maint-*` / `ch-*` | Code owns execution |
 
@@ -70,3 +70,11 @@ Per-tab reference targets (full matrix in `ux-relay/IDENTITY.md`):
 ## Monitor sentinel
 
 `AGENT_LOOP_WAKE_PO_RELAY` / `AGENT_LOOP_TICK_PO_RELAY` only.
+
+
+## Worktree protocol (code-changing ticks)
+
+- **Phase 3 (optional):** `instance_worktree.sh create` when mutating code — docs-only ticks skip — branch `loop/po-relay/<item-id>`, path `.worktrees/po-relay/`
+- **Phases 4–7:** commit and review inside worktree only — never app code on `main` while `worktree_status=active`
+- **Phase 8:** `merge` (rebase + ff-only) then `remove`; reset CHECKPOINT worktree fields
+

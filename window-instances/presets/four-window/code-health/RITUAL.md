@@ -11,6 +11,20 @@
 
 Resume `IN_PROGRESS` OR top `REFACTOR_BACKLOG` / `BUG_BACKLOG` OR next `SCAN_COVERAGE` row.
 
+**Worktree (code items):** mandatory prep then create before Phase 4:
+
+```bash
+bash tools/cursor-loop/scripts/prepare_select_tick.sh . \
+  --state-file docs/window-instances/code-health/STATE.md \
+  --loop-id code-health
+bash tools/cursor-loop/scripts/instance_worktree.sh create . \
+  --loop-id code-health \
+  --item-id <backlog-id> \
+  --state-file docs/window-instances/code-health/STATE.md
+```
+
+Phases 4–7 run inside `WORKTREE_PATH` (create auto-patches CHECKPOINT).
+
 ## Phase 4 — Execute
 
 Brainstorm 2 approaches; pick minimal structural fix. Evaluate touched code against checklist below (self-check before formal review).
@@ -35,12 +49,14 @@ Brainstorm 2 approaches; pick minimal structural fix. Evaluate touched code agai
 
 ```bash
 cd pwa && npm run build
-cd server && python -m compileall app_api   # when Python touched
-git diff --stat HEAD -- pwa/ server/
-git diff --stat --cached -- pwa/ server/
+cd server && python -m compileall habits_api   # when Python touched
+bash tools/cursor-loop/scripts/prepare_review_tick.sh . \
+  --state-file docs/window-instances/code-health/STATE.md \
+  --loop-id code-health \
+  --apply
 ```
 
-Set `code_changed`; increment `review_round` if yes. Record `review_diff_range`.
+Apply script output: set `code_changed`, increment `review_round` if yes, set `review_status=pending`, record `review_diff_range`.
 
 **Regression spot-checks (when area touched):**
 
@@ -55,19 +71,40 @@ Set `code_changed`; increment `review_round` if yes. Record `review_diff_range`.
 
 Required when `code_changed=yes`. Phase 4 checklist = self-check; Phase 6 = formal review.
 
-1. [`/code-review`](../../../.cursor/commands/code-review.md) — structure, DRY, naming, patchwork vs root-cause
+**Mandatory:** Invoke [`/code-review`](../../../.cursor/commands/code-review.md) — read the full command file first. Announce: "Using /code-review to review Round N."
+
+1. Run `/code-review` — structure, DRY, naming, patchwork vs root-cause
 2. Log findings as `ch-r{N}-{seq}` with `source=round-{N}`
 3. Zero issues → sentinel `ch-r{N}-000`
 
-## Phase 7 — Receive review (Round N)
+## Phase 7 — Receive + backlog reflect (Round N)
 
 Required when `code_changed=yes`.
 
-1. [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md) on round-N rows
-2. Implement fix-now; re-verify build if needed
+### Phase 7a — Receive (mandatory skill + command)
+
+Read Superpowers **receiving-code-review** skill, then invoke [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md).
+
+1. Triage every round-N row: `fix-now` | `backlog` | `closed` | `pushback`
+2. Implement fix-now in worktree; re-verify build if needed
 3. Route cross-cutting items to Worker BACKLOG; else REVIEW_FINDINGS or BUG_BACKLOG
 
+### Phase 7b — Backlog reflect (mandatory)
+
+Every deferred finding → backlog row with id, priority, AC. Set `backlog_ref` on the REVIEW_FINDINGS row. Create `ch-*` / BUG_BACKLOG / REFACTOR_BACKLOG items for deferred findings. Cannot close until complete.
+
 ## Phase 8 — Close
+
+When `worktree_status=active`:
+
+```bash
+bash tools/cursor-loop/scripts/instance_worktree.sh merge . --loop-id code-health \
+  --apply
+bash tools/cursor-loop/scripts/instance_worktree.sh remove . --loop-id code-health \
+  --apply
+```
+
+Then set `worktree_status=none` and clear worktree path/branch/item fields.
 
 HISTORY, SCAN_COVERAGE, CHECKPOINT, backlogs. No warn/fail on touched files without backlog entry.
 

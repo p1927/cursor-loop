@@ -3,10 +3,37 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 import ritual_phase as rp
+
+
+def load_archetype(project_root: Path, loop_id: str) -> str:
+    for path in (
+        project_root / "docs/window-instances/instances.manifest.json",
+    ):
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for entry in data.get("instances") or []:
+                if entry.get("loop_id") == loop_id:
+                    return str(entry.get("archetype") or "")
+        except (json.JSONDecodeError, OSError):
+            pass
+    try:
+        import loop_hook_lib as mod
+
+        manifest = mod.load_manifest(project_root)
+        data = mod.load_instances_manifest(project_root, manifest)
+        for entry in data.get("instances") or []:
+            if entry.get("loop_id") == loop_id:
+                return str(entry.get("archetype") or "")
+    except (FileNotFoundError, ValueError, KeyError, OSError):
+        pass
+    return ""
 
 
 def emit_fail(loop_id: str, result: rp.GateResult) -> None:
@@ -27,7 +54,7 @@ def main() -> int:
     parser.add_argument("--state-file", required=True)
     parser.add_argument(
         "--mode",
-        choices=("arm", "checkpoint", "wake", "transition"),
+        choices=("arm", "checkpoint", "wake", "steady", "transition"),
         default="arm",
     )
     parser.add_argument("--from-phase", default="", help="For --mode=transition")
@@ -47,6 +74,7 @@ def main() -> int:
 
     state_text = state_path.read_text(encoding="utf-8")
     checkpoint = rp.parse_checkpoint_table(state_text)
+    archetype = load_archetype(root, args.loop_id)
 
     if args.mode == "transition":
         if not args.from_phase or not args.to_phase:
@@ -70,11 +98,22 @@ def main() -> int:
         print(f"RITUAL_GATE_OK loop_id={args.loop_id} allowed_phase={allowed} mode=wake")
         return 0
 
+    gate_mode = args.mode
+    if args.mode == "steady":
+        gate_mode = "steady"
+    elif args.mode == "checkpoint":
+        gate_mode = "checkpoint"
+    else:
+        gate_mode = "arm"
+
     result = rp.required_phase_before_arm(
         checkpoint,
         state_text,
         project_root=root,
-        mode="checkpoint" if args.mode == "checkpoint" else "arm",
+        mode=gate_mode,
+        loop_id=args.loop_id,
+        state_file=args.state_file,
+        archetype=archetype,
     )
     if not result.ok:
         emit_fail(args.loop_id, result)

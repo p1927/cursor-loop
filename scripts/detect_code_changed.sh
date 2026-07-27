@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
-# Phase 5 helper — detect code changes under pwa/ and server/.
-# Exit 0 = no changes, 1 = changes detected (prints stat).
+# Phase 5 helper — detect code changes in this window's review scope.
+# Usage: detect_code_changed.sh [project] [--loop-id ID] [--state-file PATH]
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${1:-.}"
-ROOT="$(cd "$ROOT" && pwd)"
+shift || true
 
-changed=0
-if ! git -C "$ROOT" diff --quiet HEAD -- pwa/ server/ 2>/dev/null; then
-  changed=1
+LOOP_ID=""
+STATE_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --loop-id) LOOP_ID="${2:?}"; shift 2 ;;
+    --state-file) STATE_FILE="${2:?}"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+args=(python3 "${SCRIPT_DIR}/review_scope.py" "$(cd "$ROOT" && pwd)" --stat)
+if [[ -n "$LOOP_ID" ]]; then
+  args+=(--loop-id "$LOOP_ID")
 fi
-if ! git -C "$ROOT" diff --quiet --cached -- pwa/ server/ 2>/dev/null; then
-  changed=1
+if [[ -n "$STATE_FILE" ]]; then
+  args+=(--state-file "$STATE_FILE")
 fi
 
-if [[ "$changed" -eq 1 ]]; then
-  echo "CODE_CHANGED=yes"
-  git -C "$ROOT" diff --stat HEAD -- pwa/ server/ 2>/dev/null || true
-  git -C "$ROOT" diff --stat --cached -- pwa/ server/ 2>/dev/null || true
-  exit 1
-fi
-
-echo "CODE_CHANGED=no"
-exit 0
+exec "${args[@]}"

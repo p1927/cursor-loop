@@ -9,6 +9,7 @@ from pathlib import Path
 
 import build_wake_prompt
 import loop_hook_lib as mod
+import review_scope as rs
 import ritual_phase as rp
 
 
@@ -23,6 +24,29 @@ def _is_loop_up(binding: dict) -> bool:
         else mod.resolve_pidfile_path(loop_id)
     )
     return mod.is_loop_process_alive(pidfile)
+
+
+def _review_followup(
+    *,
+    root: Path,
+    loop_id: str,
+    contract_doc: str,
+    state_file: str,
+    gate: rp.GateResult,
+) -> str:
+    paths = rs.review_paths(loop_id, state_file)
+    changed = rs.list_changed_files(root, paths)
+    files_note = ", ".join(changed[:20])
+    if len(changed) > 20:
+        files_note += f" (+{len(changed) - 20} more)"
+    return (
+        f"REVIEW INCOMPLETE for {loop_id} at Phase 5+. "
+        f"MUST read every changed file: {files_note or '(run prepare_review_tick.sh --apply)'}. "
+        f"Invoke /code-review, then read receiving-code-review skill + /receiving-code-review, "
+        f"then Phase 7b backlog reflect. "
+        f"allowed_phase={gate.allowed_phase}; {gate.reason}; FIX: {gate.fix}. "
+        f"Read {contract_doc} and {state_file}."
+    )
 
 
 def main() -> int:
@@ -57,6 +81,29 @@ def main() -> int:
     if lock and lock.get("conversation_id") not in (None, conversation_id):
         return 0
 
+    if state_file:
+        state_path = root / state_file
+        if state_path.is_file():
+            state_text = state_path.read_text(encoding="utf-8")
+            checkpoint = rp.parse_checkpoint_table(state_text)
+            review_gate = rp.review_stop_needed(
+                checkpoint,
+                state_text,
+                project_root=root,
+                loop_id=loop_id,
+                state_file=state_file,
+            )
+            if review_gate is not None:
+                msg = _review_followup(
+                    root=root,
+                    loop_id=loop_id,
+                    contract_doc=contract_doc,
+                    state_file=state_file,
+                    gate=review_gate,
+                )
+                print(json.dumps({"followup_message": msg}))
+                return 0
+
     if _is_loop_up(binding):
         return 0
 
@@ -85,7 +132,14 @@ def main() -> int:
         if state_path.is_file():
             state_text = state_path.read_text(encoding="utf-8")
             checkpoint = rp.parse_checkpoint_table(state_text)
-            gate = rp.required_phase_before_arm(checkpoint, state_text, project_root=root, mode="arm")
+            gate = rp.required_phase_before_arm(
+                checkpoint,
+                state_text,
+                project_root=root,
+                mode="arm",
+                loop_id=loop_id,
+                state_file=state_file,
+            )
             if not gate.ok:
                 ritual_note = (
                     f" RITUAL INCOMPLETE: allowed_phase={gate.allowed_phase}; {gate.fix}; "

@@ -2,11 +2,11 @@
 
 ## Role
 
-Project lead engineer (Worker / features window).
+Habits lead engineer (Worker / features window).
 
 ## Job
 
-Ship top unchecked `task-*` backlog item per tick — verify build, commit, update STATE.
+Ship top unchecked `relay-*` backlog item per tick — verify build, commit, update STATE.
 
 ## Skills (read before work)
 
@@ -15,8 +15,9 @@ Ship top unchecked `task-*` backlog item per tick — verify build, commit, upda
 
 ## Code review cycle (mandatory on code-changing ticks)
 
-- **Phase 6:** [`/code-review`](../../../.cursor/commands/code-review.md) — log `wk-r{N}-*` findings with `source=round-{N}`
-- **Phase 7:** [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md) — verify and implement fix-now
+- **Phase 6:** Invoke [`/code-review`](../../../.cursor/commands/code-review.md) — read full command; no freestyle review
+- **Phase 7a:** Read Superpowers **receiving-code-review** skill, then invoke [`/receiving-code-review`](../../../.cursor/commands/receiving-code-review.md)
+- **Phase 7b:** Backlog reflect — every deferred finding → backlog row with id + AC + `backlog_ref`
 
 ## Forbidden
 
@@ -28,6 +29,14 @@ Ship top unchecked `task-*` backlog item per tick — verify build, commit, upda
 ## Monitor sentinel
 
 `AGENT_LOOP_WAKE_HABITS` / `AGENT_LOOP_TICK_HABITS` only.
+
+
+
+## Worktree protocol (code-changing ticks)
+
+- **Phase 3:** `instance_worktree.sh create` — branch `loop/worker-relay/<item-id>`, path `.worktrees/worker-relay/`
+- **Phases 4–7:** commit and review inside worktree only — never app code on `main` while `worktree_status=active`
+- **Phase 8:** `merge` (rebase + ff-only) then `remove`; reset CHECKPOINT worktree fields
 
 ## Git commit protocol
 
@@ -43,4 +52,4 @@ Format: `feat(scope): …` or `fix(scope): …` — one sentence **why**.
 
 ## Handoffs (read-only)
 
-PO feeds `task-*` via `po-relay/STATE.md` → copy to BACKLOG with AC. Do not read PO backlogs for execution priority — use own BACKLOG only.
+PO feeds `relay-*` via `po-relay/STATE.md` → copy to BACKLOG with AC. Do not read PO backlogs for execution priority — use own BACKLOG only.
