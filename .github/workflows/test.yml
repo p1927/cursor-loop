@@ -18,4 +18,4 @@ jobs:
       - name: Unit tests
         run: python3 -m pytest tests/test_loop_hook_lib.py -q
       - name: Smoke tests
-        run: bash tests/smoke_hooks.sh && bash tests/smoke_install.sh && bash tests/smoke_minimal_example.sh
+        run: bash tests/smoke_hooks.sh && bash tests/smoke_install.sh && bash tests/smoke_minimal_example.sh && bash tests/smoke_enforcement.sh

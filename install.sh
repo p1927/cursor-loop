@@ -127,6 +127,10 @@ chmod +x \
   "${INSTALL_PACKAGE}/scripts/hook_survival.py" \
   "${INSTALL_PACKAGE}/scripts/merge_hooks.py" \
   "${INSTALL_PACKAGE}/scripts/cleanup_bindings.py" \
+  "${INSTALL_PACKAGE}/scripts/force-reset.sh" \
+  "${INSTALL_PACKAGE}/scripts/validate_contracts.py" \
+  "${INSTALL_PACKAGE}/scripts/verify-loop.sh" \
+  "${INSTALL_PACKAGE}/scripts/daily-maintenance.sh" \
   "${INSTALL_PACKAGE}/scripts/doctor.sh"
 
 MANIFEST="${TARGET}/.cursor/cursor-loop.json"

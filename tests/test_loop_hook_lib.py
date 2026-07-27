@@ -82,12 +82,6 @@ def test_build_binding(tmp_path: Path) -> None:
     assert "pidfile" in binding
 
 
-def test_write_binding_sets_updated_at(tmp_path: Path) -> None:
-    mod.write_binding(tmp_path, "conv-1", {"loop_id": "x"})
-    data = json.loads(mod.binding_path(tmp_path, "conv-1").read_text(encoding="utf-8"))
-    assert "updated_at" in data
-
-
 def test_cleanup_stale_bindings(tmp_path: Path) -> None:
     bindings_dir = tmp_path / ".cursor" / "loop-bindings"
     bindings_dir.mkdir(parents=True)
@@ -114,3 +108,39 @@ def test_cleanup_stale_bindings(tmp_path: Path) -> None:
     assert "old-chat" in removed
     assert not stale.is_file()
     assert fresh.is_file()
+
+
+def test_write_binding_sets_updated_at(tmp_path: Path) -> None:
+    mod.write_binding(tmp_path, "conv-1", {"loop_id": "x"})
+    data = json.loads(mod.binding_path(tmp_path, "conv-1").read_text(encoding="utf-8"))
+    assert "updated_at" in data
+
+
+def test_loop_lock_rejects_second_chat(tmp_path: Path) -> None:
+    ok, _ = mod.acquire_loop_lock(tmp_path, "demo", "chat-a", "docs/agents/demo.md")
+    assert ok
+    ok2, err = mod.acquire_loop_lock(tmp_path, "demo", "chat-b", "docs/agents/demo.md")
+    assert not ok2
+    assert err and "another chat" in err
+    mod.release_loop_lock(tmp_path, "demo", "chat-a")
+    ok3, _ = mod.acquire_loop_lock(tmp_path, "demo", "chat-b", "docs/agents/demo.md")
+    assert ok3
+
+
+def test_validate_duplicate_loop_id(tmp_path: Path) -> None:
+    agents = tmp_path / "docs/agents"
+    agents.mkdir(parents=True)
+    body = SAMPLE_CONTRACT.replace("docs/agents/demo-task.md", "docs/agents/PLACEHOLDER.md")
+    (agents / "a.md").write_text(body.replace("PLACEHOLDER.md", "a.md"), encoding="utf-8")
+    (agents / "b.md").write_text(body.replace("PLACEHOLDER.md", "b.md"), encoding="utf-8")
+    pkg = tmp_path / "tools/cursor-loop/scripts"
+    pkg.mkdir(parents=True)
+    (pkg / "agent-loop.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    manifest_path = tmp_path / ".cursor/cursor-loop.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps({"package_root": "tools/cursor-loop", "contracts_dir": "docs/agents"}),
+        encoding="utf-8",
+    )
+    errors = mod.validate_all_contracts(tmp_path, mod.load_manifest(tmp_path))
+    assert any("duplicate loop_id" in e for e in errors)

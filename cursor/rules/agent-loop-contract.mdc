@@ -1,32 +1,54 @@
 ---
-description: Self-arming terminal agent loops when user @mentions a loop contract doc
+description: Self-arming terminal agent loops — mandatory enforcement on every turn
 alwaysApply: true
 ---
 
-# Agent Loop Contract
+# Agent Loop Contract (mandatory)
 
-When the user `@`-mentions a **loop contract** file, or says **keep working** with one attached, you MUST execute the full loop lifecycle. Do not ask the user to run shell commands.
+You operate loop-driven work in this project. **Do not end any turn** until the End-of-turn gate passes.
 
-## Matching docs
+Arming, loop survival, backup wake, and verify commands are defined **only here** — not in contract docs. Contract docs hold Loop config + Task + Ritual.
 
-Any of:
+---
 
-- `docs/agents/*.md`
-- `docs/START_LOOPS.md` (then open the linked contract for this window)
-- `**/AGENT_LOOP*.md`
-- Project wake docs that contain a `## Loop config` table
+## When this applies
 
-## On first message or tick
+- User `@`-mentions a loop contract, says **keep working**, or you are woken by your contract's **sentinel** / **wake_sentinel**
+- You are working in a window that owns a loop contract (Worker / UX / Code / PO)
 
-1. Read the doc's **Loop config** table (`loop_id`, `sentinel`, `wake_sentinel`, `interval_sec`, `monitor_regex`, `pidfile`, `loop_script`).
-2. Execute **Arming** if the primary loop is not running (`pgrep` / pidfile check).
-3. Run **Ritual** immediately — do not wait for the first automated tick.
-4. Execute **Loop survival** before ending the turn — no exceptions.
+---
 
-## Arming (mandatory)
+## Loop config (read from contract doc)
 
-1. If pidfile process is alive → skip start; go to Ritual.
-2. Start primary loop in a **background shell** (`block_until_ms: 0`) using `loop_script` from Loop config (required):
+Required fields: `loop_id`, `sentinel`, `wake_sentinel`, `interval_sec`, `monitor_regex`, `loop_script`, `contract_doc`.
+
+**One Composer chat = one `loop_id`.** Never bind the same `loop_id` in two chats. If bind fails, tell the user to close the other window or run:
+
+```bash
+bash <package_root>/scripts/force-reset.sh . --all
+```
+
+---
+
+## On every wake (tick or first message)
+
+1. Read the contract doc's **Loop config** + **Task** + **Ritual**
+2. If `bind_blocked` in binding — stop and report `bind_error`; do not arm
+3. **Arming** if loop DOWN (see below)
+4. Run **Ritual** immediately
+5. Pass **End-of-turn gate** before finishing
+
+---
+
+## Arming (mandatory when loop DOWN)
+
+1. Run verify — if UP, skip to Ritual:
+
+```bash
+bash <package_root>/scripts/verify-loop.sh <loop_id>
+```
+
+2. Start primary loop — background shell (`block_until_ms: 0`):
 
 ```bash
 LOOP_ID=<loop_id> SENTINEL=<sentinel> INTERVAL=<interval_sec> \
@@ -34,27 +56,84 @@ PROMPT='Read <contract_doc> and run Ritual. Do not ask user.' \
 bash <loop_script>
 ```
 
-If `loop_script` is missing, read `.cursor/cursor-loop.json` → `package_root/scripts/agent-loop.sh`.
+3. Set **`notify_on_output`** on `<monitor_regex>` (must start with `^`)
+4. Run **Ritual** now — do not wait for first tick
 
-3. Set **`notify_on_output`** on regex: `<monitor_regex>` (must be anchored, e.g. `^AGENT_LOOP_TICK_*`).
-4. Run Ritual **now**.
+---
 
 ## Loop survival (mandatory every turn)
 
 Before ending ANY turn:
 
-1. **Verify primary loop** — if DOWN, re-run Arming.
-2. **Backup wake** — background `sleep <interval_sec>` then echo `<wake_sentinel> {"prompt":"..."}'` with `notify_on_output` on `^<wake_sentinel>`.
-3. **Checkpoint** — record PID + shell id in the doc's state file if listed.
+1. **Verify primary loop** — `verify-loop.sh <loop_id>`; if DOWN → re-run Arming
+2. **Backup wake** — background `sleep <interval_sec>` then echo  
+   `<wake_sentinel> {"loop_id":"<loop_id>","prompt":"Read <contract_doc> and run Ritual"}'`  
+   with `notify_on_output` on `^<wake_sentinel>`
+3. **Checkpoint** — if contract lists `state_file`, record pidfile PID + shell id there
 
-Triple redundancy: primary loop + backup wake every turn + stop hook (reads `.cursor/loop-bindings/<conversation_id>.json`; `beforeSubmitPrompt` sets binding on `@` contract, clears on **stop loop** via `stopped: true`).
+---
+
+## End-of-turn gate (hard requirement)
+
+**Do NOT end your turn until all are true:**
+
+- [ ] `verify-loop.sh <loop_id>` exits 0 (loop UP)
+- [ ] Backup wake shell started this turn with output monitoring
+- [ ] Ritual for this wake completed
+- [ ] No `bind_blocked` on this chat's binding
+
+If any check fails, fix it before ending the turn. Do not ask the user unless impossible.
+
+---
 
 ## Sentinel isolation
 
-- Respond **only** to the `sentinel` / `wake_sentinel` from **this chat's** loop contract.
-- Ignore ticks from other windows (`AGENT_LOOP_TICK_*` not in your config table).
-- One loop per Composer chat.
+- Respond **only** to your contract's `sentinel` and `wake_sentinel`
+- Ignore all other `AGENT_LOOP_TICK_*` / `AGENT_LOOP_WAKE_*` lines
+- One loop per chat; unique sentinel per window
+
+---
 
 ## Stop
 
-When the user says **stop loop** or **stop working**: kill the loop process for this `loop_id`, clear pidfile, do not re-arm. The bind hook sets `stopped: true` on the binding so the stop hook will not follow up.
+When user says **stop loop** or **stop working**:
+
+1. Kill process from pidfile `$TMPDIR/cursor-loop-<loop_id>.pid`
+2. Remove pidfile
+3. Do **not** re-arm or start backup wake
+4. Bind hook sets `stopped: true` — survival hook will not follow up
+
+If stop before first `@` bind: still kill by `loop_id` from the contract you were working from.
+
+---
+
+## Extreme recovery
+
+When loops are stuck, duplicate chats, corrupt bindings, or wrong window owns a loop:
+
+```bash
+bash <package_root>/scripts/force-reset.sh . --all
+bash <package_root>/scripts/validate_contracts.py .
+```
+
+Then paste `@<contract_doc> keep working` again in the correct window.
+
+---
+
+## Maintenance (optional)
+
+```bash
+bash <package_root>/scripts/daily-maintenance.sh .
+```
+
+---
+
+## Enforcement stack
+
+1. **This rule** — end-of-turn gate + verify-loop.sh
+2. **Primary loop** — background sentinel ticker
+3. **Backup wake** — every turn
+4. **Stop hook** — follow-up if loop dead (max 25 turns; warns at 20)
+5. **loop_id lock** — one chat per loop_id (hooks enforce on bind)
+
+Read `<package_root>` from `.cursor/cursor-loop.json`.

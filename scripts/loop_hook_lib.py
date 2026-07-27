@@ -7,7 +7,10 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-PACKAGE_VERSION = "0.2.0"
+PACKAGE_VERSION = "0.3.0"
+
+SURVIVAL_TURN_WARN = 20
+SURVIVAL_TURN_LIMIT = 25
 
 LOOP_CONFIG_KEYS = frozenset(
     {
@@ -266,8 +269,151 @@ def build_binding(root: Path, manifest: dict, rel: str, cfg: dict) -> dict:
         "loop_id": loop_id,
         "contract_doc": cfg.get("contract_doc") or rel,
         "sentinel": cfg.get("sentinel", ""),
+        "wake_sentinel": cfg.get("wake_sentinel", ""),
         "interval_sec": cfg.get("interval_sec", ""),
+        "monitor_regex": cfg.get("monitor_regex", ""),
         "loop_script": resolve_loop_script(root, manifest, cfg),
         "pidfile": str(pidfile),
         "stopped": False,
+        "survival_turns": 0,
     }
+
+
+def loop_lock_path(root: Path, loop_id: str) -> Path:
+    return root / ".cursor" / "loop-bindings" / "locks" / f"{loop_id}.json"
+
+
+def read_loop_lock(root: Path, loop_id: str) -> dict | None:
+    path = loop_lock_path(root, loop_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def acquire_loop_lock(
+    root: Path,
+    loop_id: str,
+    conversation_id: str,
+    contract_doc: str,
+) -> tuple[bool, str | None]:
+    """One loop_id per chat. Returns (ok, error_message)."""
+    path = loop_lock_path(root, loop_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    if path.is_file():
+        try:
+            lock = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            lock = {}
+        owner = lock.get("conversation_id")
+        if owner and owner != conversation_id:
+            return (
+                False,
+                f"loop_id '{loop_id}' is already active in another chat "
+                f"(conversation {owner[:12]}…). "
+                f"Use one window per loop_id, or run force-reset.sh --all",
+            )
+
+    path.write_text(
+        json.dumps(
+            {
+                "loop_id": loop_id,
+                "conversation_id": conversation_id,
+                "contract_doc": contract_doc,
+                "updated_at": now,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return True, None
+
+
+def release_loop_lock(root: Path, loop_id: str, conversation_id: str) -> None:
+    path = loop_lock_path(root, loop_id)
+    if not path.is_file():
+        return
+    try:
+        lock = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        path.unlink(missing_ok=True)
+        return
+    if lock.get("conversation_id") == conversation_id:
+        path.unlink(missing_ok=True)
+
+
+def iter_contract_files(root: Path, manifest: dict) -> list[Path]:
+    contracts_dir = root / manifest["contracts_dir"]
+    if not contracts_dir.is_dir():
+        return []
+    files = []
+    for path in sorted(contracts_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if has_loop_config(text):
+            files.append(path)
+    return files
+
+
+def validate_all_contracts(root: Path, manifest: dict) -> list[str]:
+    """Return list of error messages (empty = ok)."""
+    errors: list[str] = []
+    loop_ids: dict[str, str] = {}
+    sentinels: dict[str, str] = {}
+
+    for path in iter_contract_files(root, manifest):
+        rel = str(path.relative_to(root))
+        cfg = parse_loop_config(path.read_text(encoding="utf-8"))
+        loop_id = cfg.get("loop_id")
+        sentinel = cfg.get("sentinel")
+
+        if not loop_id:
+            errors.append(f"{rel}: missing loop_id")
+            continue
+        if loop_id in loop_ids:
+            errors.append(
+                f"duplicate loop_id '{loop_id}' in {rel} and {loop_ids[loop_id]}"
+            )
+        else:
+            loop_ids[loop_id] = rel
+
+        if sentinel:
+            if sentinel in sentinels:
+                errors.append(
+                    f"duplicate sentinel '{sentinel}' in {rel} and {sentinels[sentinel]}"
+                )
+            else:
+                sentinels[sentinel] = rel
+
+        script = cfg.get("loop_script") or f"{manifest['package_root']}/scripts/agent-loop.sh"
+        script_path = root / script if not Path(script).is_absolute() else Path(script)
+        if not script_path.is_file():
+            errors.append(f"{rel}: loop_script not found: {script}")
+
+    return errors
+
+
+def is_loop_process_alive(pidfile: Path) -> bool:
+    if not pidfile.is_file():
+        return False
+    try:
+        pid = int(pidfile.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def kill_loop_process(pidfile: Path) -> bool:
+    if not pidfile.is_file():
+        return False
+    try:
+        pid = int(pidfile.read_text(encoding="utf-8").strip())
+        os.kill(pid, 15)
+        return True
+    except (ValueError, ProcessLookupError, PermissionError, OSError):
+        return False

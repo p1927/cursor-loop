@@ -28,12 +28,16 @@ def main() -> int:
         return 0
 
     binding = mod.read_binding(root, conversation_id)
-    if not binding or binding.get("stopped"):
+    if not binding or binding.get("stopped") or binding.get("bind_blocked"):
         return 0
 
     loop_id = binding.get("loop_id") or ""
     contract_doc = binding.get("contract_doc") or ""
     if not loop_id or not contract_doc:
+        return 0
+
+    lock = mod.read_loop_lock(root, loop_id)
+    if lock and lock.get("conversation_id") not in (None, conversation_id):
         return 0
 
     pidfile = (
@@ -42,18 +46,22 @@ def main() -> int:
         else mod.resolve_pidfile_path(loop_id)
     )
 
-    if pidfile.is_file():
-        try:
-            pid = int(pidfile.read_text(encoding="utf-8").strip())
-            os.kill(pid, 0)
-            return 0
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
+    if mod.is_loop_process_alive(pidfile):
+        return 0
+
+    turns = int(binding.get("survival_turns") or 0) + 1
+    binding["survival_turns"] = turns
+    mod.write_binding(root, conversation_id, binding)
 
     msg = (
         f"Loop {loop_id} is DOWN. Re-read {contract_doc}, "
         "execute Arming + Ritual + Loop survival. Do not ask user."
     )
+    if turns >= mod.SURVIVAL_TURN_WARN:
+        msg += (
+            f" WARNING: stop-hook recovery turn {turns}/{mod.SURVIVAL_TURN_LIMIT} — "
+            "after limit, paste @contract again or run force-reset.sh --all."
+        )
     print(json.dumps({"followup_message": msg}))
     return 0
 

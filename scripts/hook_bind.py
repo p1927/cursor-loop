@@ -39,12 +39,25 @@ def main() -> int:
         if binding:
             binding["stopped"] = True
             mod.write_binding(root, conversation_id, binding)
+            loop_id = binding.get("loop_id")
+            if loop_id:
+                mod.release_loop_lock(root, loop_id, conversation_id)
         return 0
 
-    if mod.is_keep_working_request(prompt):
+    if mod.is_keep_working_request(prompt) and not mod.find_contract_paths(prompt, root, manifest):
         binding = mod.read_binding(root, conversation_id)
         if binding and binding.get("stopped"):
             binding["stopped"] = False
+            binding.pop("bind_blocked", None)
+            binding.pop("bind_error", None)
+            loop_id = binding.get("loop_id")
+            contract_doc = binding.get("contract_doc") or ""
+            if loop_id and contract_doc:
+                ok, err = mod.acquire_loop_lock(root, loop_id, conversation_id, contract_doc)
+                if not ok:
+                    binding["bind_blocked"] = True
+                    binding["bind_error"] = err
+                    binding["stopped"] = True
             mod.write_binding(root, conversation_id, binding)
             return 0
 
@@ -63,6 +76,18 @@ def main() -> int:
             binding = mod.build_binding(root, manifest, rel, cfg)
         except FileNotFoundError:
             continue
+
+        contract_doc = binding["contract_doc"]
+        ok, err = mod.acquire_loop_lock(root, loop_id, conversation_id, contract_doc)
+        if not ok:
+            binding["bind_blocked"] = True
+            binding["bind_error"] = err
+            binding["stopped"] = True
+            mod.write_binding(root, conversation_id, binding)
+            break
+
+        binding.pop("bind_blocked", None)
+        binding.pop("bind_error", None)
         mod.write_binding(root, conversation_id, binding)
         break
 

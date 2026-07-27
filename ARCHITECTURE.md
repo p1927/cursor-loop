@@ -105,7 +105,43 @@ Hooks resolve `package_root/scripts/` for Python modules — **not** relative to
 
 ---
 
-## Stop flow
+## loop_id lock (one chat per loop)
+
+File: `.cursor/loop-bindings/locks/<loop_id>.json`
+
+When a chat binds to a contract, the hook acquires the lock for that `loop_id`. A second chat binding the same `loop_id` gets `bind_blocked: true` and must not arm.
+
+Release: **stop loop** in the owning chat, or `force-reset.sh --all`.
+
+---
+
+## Force reset (extreme events)
+
+```bash
+bash <package_root>/scripts/force-reset.sh . --all
+bash <package_root>/scripts/validate_contracts.py .
+```
+
+| Flag | Effect |
+|------|--------|
+| `--all` | Kill loops, clear pidfiles, bindings, locks |
+| `--loop-id ID` | Scope to one loop |
+| `--kill` | Kill process + pidfile only |
+| `--bindings` | Clear conversation bindings |
+| `--locks` | Clear loop_id locks |
+
+---
+
+## Agent enforcement
+
+The agent cannot be programmatically forced — enforcement is layered:
+
+1. **Rule** — end-of-turn gate; must run `verify-loop.sh` before ending turn
+2. **verify-loop.sh** — concrete exit-code check the agent runs in shell
+3. **Hooks** — bind lock, stop flag, survival follow-up with turn counter
+4. **validate_contracts.py** — catch duplicate loop_id at dev time
+
+---
 
 ```text
 User: "stop loop"

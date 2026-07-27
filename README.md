@@ -83,6 +83,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for system design, binding TTL, and failu
 
 **Stop:** say **stop loop** in that chat.
 
+**Extreme reset** (stuck loops, wrong chat, corrupt bindings):
+
+```bash
+bash tools/cursor-loop/scripts/force-reset.sh . --all
+```
+
+**Validate contracts** (unique loop_id per window):
+
+```bash
+bash tools/cursor-loop/scripts/validate_contracts.py .
+```
+
 **After IDE restart:** paste the same line again.
 
 **Maintenance:**
@@ -111,6 +123,10 @@ cursor-loop/
 │   ├── hook_survival.py
 │   ├── merge_hooks.py
 │   ├── cleanup_bindings.py
+│   ├── force-reset.sh
+│   ├── validate_contracts.py
+│   ├── verify-loop.sh
+│   ├── daily-maintenance.sh
 │   └── doctor.sh
 ├── cursor/
 │   ├── rules/agent-loop-contract.mdc

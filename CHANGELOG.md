@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- **force-reset.sh** — nuclear cleanup (`--all`, `--loop-id`, `--kill`, `--bindings`, `--locks`)
+- **loop_id lock** — one chat per loop_id; bind blocked if another chat owns it
+- **validate_contracts.py** — duplicate loop_id/sentinel detection
+- **verify-loop.sh** — agent must run before end of turn (enforced in rule)
+- **daily-maintenance.sh** — cleanup + status + validate
+- Stricter **agent-loop-contract.mdc** — end-of-turn gate checklist
+- Survival hook warns at turn 20/25; releases lock on stop
+- Contract docs trimmed — arming/survival only in rule
+
 ## 0.2.0
 
 - `ARCHITECTURE.md` — system design reference
