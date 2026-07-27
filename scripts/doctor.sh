@@ -20,7 +20,7 @@ from pathlib import Path
 root = Path('${TARGET}')
 manifest = json.loads((root / '.cursor/cursor-loop.json').read_text())
 pkg = root / manifest['package_root']
-for rel in ['scripts/loop_hook_lib.py', 'scripts/agent-loop.sh', 'scripts/hook_bind.py', 'scripts/cleanup_bindings.py']:
+for rel in ['scripts/loop_hook_lib.py', 'scripts/agent-loop.sh', 'scripts/arm-wake.sh', 'scripts/verify-wake.sh', 'scripts/hook_bind.py', 'scripts/cleanup_bindings.py']:
     path = pkg / rel
     print(('OK  ' if path.is_file() else 'FAIL') + ' ' + str(path))
 ttl = manifest.get('binding_ttl_days', 30)

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "instances": [
+    {
+      "loop_id": "worker-relay",
+      "archetype": "engineer",
+      "bundle": "docs/window-instances/worker-relay",
+      "contract_doc": "docs/window-instances/worker-relay/INSTANCE.md",
+      "state_file": "docs/window-instances/worker-relay/STATE.md",
+      "sentinel": "AGENT_LOOP_TICK_HABITS",
+      "wake_sentinel": "AGENT_LOOP_WAKE_HABITS",
+      "interval_sec": 120,
+      "backlog_sections": [
+        "BACKLOG",
+        "BRAINSTORM"
+      ],
+      "handoffs_out": [
+        "po-relay",
+        "ux-relay",
+        "code-health"
+      ]
+    },
+    {
+      "loop_id": "ux-relay",
+      "archetype": "designer",
+      "bundle": "docs/window-instances/ux-relay",
+      "contract_doc": "docs/window-instances/ux-relay/INSTANCE.md",
+      "state_file": "docs/window-instances/ux-relay/STATE.md",
+      "sentinel": "AGENT_LOOP_TICK_UX_RELAY",
+      "wake_sentinel": "AGENT_LOOP_WAKE_UX_RELAY",
+      "interval_sec": 300,
+      "backlog_sections": [
+        "UI_POLISH_BACKLOG",
+        "UX_GAPS"
+      ],
+      "handoffs_out": [
+        "po-relay"
+      ],
+      "handoffs_in": [
+        "po-relay"
+      ]
+    },
+    {
+      "loop_id": "po-relay",
+      "archetype": "product",
+      "bundle": "docs/window-instances/po-relay",
+      "contract_doc": "docs/window-instances/po-relay/INSTANCE.md",
+      "state_file": "docs/window-instances/po-relay/STATE.md",
+      "sentinel": "AGENT_LOOP_TICK_PO_RELAY",
+      "wake_sentinel": "AGENT_LOOP_WAKE_PO_RELAY",
+      "interval_sec": 120,
+      "backlog_sections": [
+        "UI_PROPOSALS",
+        "UX_BACKLOG",
+        "QUALITY_BACKLOG",
+        "DESIGN_DECISIONS",
+        "BRAINSTORM_LOG"
+      ],
+      "handoffs_out": [
+        "worker-relay",
+        "ux-relay",
+        "code-health"
+      ],
+      "handoffs_in": [
+        "ux-relay"
+      ]
+    },
+    {
+      "loop_id": "code-health",
+      "archetype": "engineer",
+      "bundle": "docs/window-instances/code-health",
+      "contract_doc": "docs/window-instances/code-health/INSTANCE.md",
+      "state_file": "docs/window-instances/code-health/STATE.md",
+      "sentinel": "AGENT_LOOP_TICK_CODE_HEALTH",
+      "wake_sentinel": "AGENT_LOOP_WAKE_CODE_HEALTH",
+      "interval_sec": 120,
+      "backlog_sections": [
+        "REFACTOR_BACKLOG",
+        "BUG_BACKLOG"
+      ],
+      "handoffs_out": [],
+      "handoffs_in": [
+        "po-relay"
+      ]
+    }
+  ],
+  "preset": "habits-pwa"
+}

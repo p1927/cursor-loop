@@ -41,16 +41,37 @@ cursor-loop automates that loop so the user pastes one line per window and walks
 
 ---
 
+## Wake modes (0.4+)
+
+| Mode | Script | Monitored regex | Notes |
+|------|--------|-----------------|-------|
+| **`dynamic`** (default) | `arm-wake.sh` | `^AGENT_LOOP_WAKE_*` | One-shot `sleep && echo` per turn; survives Cursor shell cleanup. DOWN after sentinel is normal; sustained DOWN means re-arm was skipped. |
+| **`persistent`** | `agent-loop.sh` | `^AGENT_LOOP_TICK_*` | Legacy `while true`; often SIGTERM ~20–40s in Agent Shell |
+
+Dynamic flow:
+
+```text
+End of turn → arm-wake.sh (background, monitored)
+           → sleep interval_sec
+           → print wake_sentinel + JSON prompt
+           → notify_on_output → Agent wakes → Ritual → checkpoint → arm-wake again
+```
+
+Recovery: stop hook checks `verify-wake.sh`; followup requires **deliverable work**, not infra-only re-arm.
+
+---
+
 ## Components
 
 | Layer | Artifact | Role |
 |-------|----------|------|
 | **Contract** | `docs/agents/*.md` | Task, ritual, loop config table |
 | **Manifest** | `.cursor/cursor-loop.json` | `package_root`, `contracts_dir`, `binding_ttl_days` |
-| **Primary loop** | `scripts/agent-loop.sh` | Infinite `sleep` + sentinel JSON line |
-| **Agent rule** | `.cursor/rules/agent-loop-contract.mdc` | Mandates arming, ritual, backup wake, stop |
+| **Dynamic wake** | `scripts/arm-wake.sh` | One-shot `sleep` + wake sentinel JSON line |
+| **Persistent loop** | `scripts/agent-loop.sh` | Optional infinite `sleep` + tick sentinel |
+| **Agent rule** | `.cursor/rules/agent-loop-contract.mdc` | Work-first ritual, checkpoint, dynamic arming |
 | **Bind hook** | `hook_bind.py` via `loop-bind.sh` | Maps `conversation_id` → contract; honors stop / keep working |
-| **Survival hook** | `hook_survival.py` via `loop-survival.sh` | Re-arms via `followup_message` if pidfile dead |
+| **Survival hook** | `hook_survival.py` via `loop-survival.sh` | Work-first followup if wake DOWN |
 | **Bindings store** | `.cursor/loop-bindings/*.json` | Runtime state per chat (gitignored) |
 
 ---
@@ -111,7 +132,7 @@ File: `.cursor/loop-bindings/locks/<loop_id>.json`
 
 When a chat binds to a contract, the hook acquires the lock for that `loop_id`. A second chat binding the same `loop_id` gets `bind_blocked: true` and must not arm.
 
-Release: **stop loop** in the owning chat, or `force-reset.sh --all`.
+Release: **stop loop** in the owning chat, or `force-reset.sh . --all --yes`.
 
 ---
 

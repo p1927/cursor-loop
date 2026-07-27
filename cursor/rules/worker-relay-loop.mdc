@@ -1,0 +1,41 @@
+---
+description: Worker relay loop — features backlog only (120s dynamic wake, own sentinel + state)
+globs:
+  - docs/window-instances/worker-relay/**
+  - pwa/src/**
+  - server/habits_api/**
+---
+
+# Worker Relay Loop Mandate
+
+This chat is the **Worker / features** window (`loop_id: worker-relay`).
+
+When woken by `AGENT_LOOP_WAKE_HABITS` (dynamic wake only — ignore legacy `AGENT_LOOP_TICK_HABITS`):
+
+1. Read [`docs/window-instances/worker-relay/INSTANCE.md`](../../docs/window-instances/worker-relay/INSTANCE.md)
+2. Then bundle: IDENTITY → STATE → RITUAL (9-phase ritual)
+3. Ship top `relay-*` from worker-relay STATE BACKLOG only
+
+## Do not cross-read other loops
+
+| Wrong source | Belongs to |
+|--------------|------------|
+| `docs/window-instances/po-relay/STATE.md` | PO window |
+| `docs/window-instances/ux-relay/STATE.md` | UX window |
+| `docs/window-instances/code-health/STATE.md` | Code health |
+
+Never report status, backlog, or checkpoints from those files in this window.
+
+## Sentinel isolation
+
+Respond **only** to `AGENT_LOOP_WAKE_HABITS` / `AGENT_LOOP_TICK_HABITS`.
+
+## Deliverable
+
+Ship relay features only — not UI polish, refactors, or PO brainstorm.
+
+**Code-changing ticks:** Phase 6 `/code-review` then Phase 7 `/receiving-code-review` before close.
+
+Restart: `@docs/window-instances/worker-relay/INSTANCE.md keep working`
+
+Loop arming: [`agent-loop-contract.mdc`](agent-loop-contract.mdc)

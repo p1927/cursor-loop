@@ -7,90 +7,146 @@ alwaysApply: true
 
 You operate loop-driven work in this project. **Do not end any turn** until the End-of-turn gate passes.
 
-Arming, loop survival, backup wake, and verify commands are defined **only here** — not in contract docs. Contract docs hold Loop config + Task + Ritual.
+Arming, wake scheduling, and checkpoint commands are defined **only here** — not in contract docs. Contract docs hold Loop config + Task + Ritual.
+
+**Platform constraint:** Cursor wakes the agent only via **stdout on a monitored Shell**. Default mode is **`dynamic`**: one `arm-wake.sh` sleeper per turn — not a persistent `while true` in Shell.
+
+Read `<package_root>` from `.cursor/cursor-loop.json`.
 
 ---
 
 ## When this applies
 
-- User `@`-mentions a loop contract, says **keep working**, or you are woken by your contract's **sentinel** / **wake_sentinel**
-- You are working in a window that owns a loop contract (Worker / UX / Code / PO)
+- User `@`-mentions a loop contract, says **keep working**, or you are woken by **sentinel** / **wake_sentinel**
+- You work in a window that owns a loop contract (Worker / UX / Code / PO)
 
 ---
 
 ## Loop config (read from contract doc)
 
-Required fields: `loop_id`, `sentinel`, `wake_sentinel`, `interval_sec`, `monitor_regex`, `loop_script`, `contract_doc`.
+Required: `loop_id`, `sentinel`, `wake_sentinel`, `interval_sec`, `monitor_regex`, `loop_script`, `contract_doc`, `state_file`, `loop_mode` (default **`dynamic`**).
 
-**One Composer chat = one `loop_id`.** Never bind the same `loop_id` in two chats. If bind fails, tell the user to close the other window or run:
+**One Composer chat = one `loop_id`.** If bind fails, report `bind_error`; do not arm.
 
-```bash
-bash <package_root>/scripts/force-reset.sh . --all
-```
-
----
-
-## On every wake (tick or first message)
-
-1. Read the contract doc's **Loop config** + **Task** + **Ritual**
-2. If `bind_blocked` in binding — stop and report `bind_error`; do not arm
-3. **Arming** if loop DOWN (see below)
-4. Run **Ritual** immediately
-5. Pass **End-of-turn gate** before finishing
-
----
-
-## Arming (mandatory when loop DOWN)
-
-1. Run verify — if UP, skip to Ritual:
+Scoped reset only:
 
 ```bash
-bash <package_root>/scripts/verify-loop.sh <loop_id>
+bash <package_root>/scripts/force-reset.sh . --loop-id <loop_id> --yes
 ```
 
-2. Start primary loop — background shell (`block_until_ms: 0`):
+Nuclear reset (all windows) requires `--all --yes`.
+
+---
+
+## Wake kinds
+
+| Kind | When | Order |
+|------|------|-------|
+| **tick** | `wake_sentinel` or `sentinel` output | Work → checkpoint → arm wake |
+| **recovery** | Stop-hook says DOWN, or wake DOWN at wake start | Work first — **never infra-only** |
+
+Ending a turn with only “loop re-armed / next tick in N min” is **forbidden**.
+
+---
+
+## On every wake
+
+1. Read contract **Loop config + Task + Ritual** and **`state_file`**
+2. If `bind_blocked` — stop and report; do not arm
+3. **Ritual deliverable** — ship backlog item, brainstorm entry, or refactor per contract (Mode-aware for PO)
+4. **Checkpoint** — see below
+5. **Arm next wake** — see Dynamic arming (end of turn if not done yet)
+6. Pass **End-of-turn gate**
+
+---
+
+## Checkpoint (after Ritual deliverable)
 
 ```bash
-LOOP_ID=<loop_id> SENTINEL=<sentinel> INTERVAL=<interval_sec> \
-PROMPT='Read <contract_doc> and run Ritual. Do not ask user.' \
-bash <loop_script>
+python3 <package_root>/scripts/checkpoint-loop.py . \
+  --conversation-id <from binding if known, else skip on first bind> \
+  --product --evidence <item-id-or-path>
 ```
 
-3. Set **`notify_on_output`** on `<monitor_regex>` (must start with `^`)
-4. Run **Ritual** now — do not wait for first tick
+Or `--blocker "reason"` if truly blocked. Use `--infra-only` only when arming failed after product work.
+
+If you cannot pass `--conversation-id`, still complete Ritual and record in `state_file` HISTORY.
 
 ---
 
-## Loop survival (mandatory every turn)
+## Dynamic arming (default — `loop_mode: dynamic`)
 
-Before ending ANY turn:
+**Forbidden in dynamic mode:** do **not** start `agent-loop.sh`, `verify-loop.sh`, or monitor `^AGENT_LOOP_TICK_*`. Window instances use dynamic wake only. A stray persistent loop causes duplicate wakes and `loop-status` STALE warnings — run `cwin refresh` to kill it.
 
-1. **Verify primary loop** — `verify-loop.sh <loop_id>`; if DOWN → re-run Arming
-2. **Backup wake** — background `sleep <interval_sec>` then echo  
-   `<wake_sentinel> {"loop_id":"<loop_id>","prompt":"Read <contract_doc> and run Ritual"}'`  
-   with `notify_on_output` on `^<wake_sentinel>`
-3. **Checkpoint** — if contract lists `state_file`, record pidfile PID + shell id there
+At **end of every turn** (max once; do not stack):
+
+```bash
+LOOP_ID=<loop_id> WAKE_SENTINEL=<wake_sentinel> INTERVAL=<interval_sec> \
+CONTRACT_DOC=<contract_doc> STATE_FILE=<state_file> \
+bash <package_root>/scripts/arm-wake.sh
+```
+
+- Background shell (`block_until_ms: 0`)
+- **`notify_on_output`** on `^<wake_sentinel>` (must start with `^`)
+- If output is `WAKE_ALREADY_ARMED` — do **not** start another
+
+Verify before ending turn:
+
+```bash
+bash <package_root>/scripts/verify-wake.sh <loop_id>
+```
+
 
 ---
 
-## End-of-turn gate (hard requirement)
+## Dynamic wake lifecycle (do not misread DOWN)
 
-**Do NOT end your turn until all are true:**
+Each `arm-wake.sh` run is **one shot**: sleep → print `wake_sentinel` → cleanup removes the pidfile. After the sentinel fires, `verify-wake.sh` shows **DOWN** — that is normal **mid-turn**, not success.
 
-- [ ] `verify-loop.sh <loop_id>` exits 0 (loop UP)
-- [ ] Backup wake shell started this turn with output monitoring
-- [ ] Ritual for this wake completed
-- [ ] No `bind_blocked` on this chat's binding
+| When | `verify-wake` | Meaning |
+|------|---------------|---------|
+| End of a healthy turn | **ARMED** | Fresh sleeper counting down — **target steady state** |
+| During a wake turn, after the old sleeper fired | **DOWN** | Old cycle finished — re-arm before ending turn |
+| End of any turn with DOWN | **FAIL** | End-of-turn gate not met — run `arm-wake.sh` again |
+| Follow-up turns ("Briefly inform…") with DOWN | **FAIL** | Not exempt — still re-arm |
 
-If any check fails, fix it before ending the turn. Do not ask the user unless impossible.
+Rules:
+
+- **Follow-up turns are not exempt** from the end-of-turn gate.
+- Always run **`verify-wake.sh` fresh** — never treat stale terminal `WAKE_ARMED pid=…` as proof of a live sleeper.
+- `instance-doctor` showing `wake=ARMED` between turns is healthy; sustained `wake=DOWN` at `phase=9-arm` means re-arm was skipped.
 
 ---
 
-## Sentinel isolation
+## Persistent mode (removed for window instances)
 
-- Respond **only** to your contract's `sentinel` and `wake_sentinel`
-- Ignore all other `AGENT_LOOP_TICK_*` / `AGENT_LOOP_WAKE_*` lines
-- One loop per chat; unique sentinel per window
+**Do not use.** Habits window instances (`docs/window-instances/*/INSTANCE.md`) are **`loop_mode: dynamic` only**. If `loop-status` shows `UP (persistent)`, run `cwin refresh` — an agent started legacy `agent-loop.sh` by mistake.
+
+---
+
+## End-of-turn gate
+
+**Dynamic mode:**
+
+- [ ] Phases advanced sequentially this turn (`1-wake` through `8-close` before arm)
+- [ ] Ritual deliverable done (or `--blocker` checkpoint)
+- [ ] `validate_ritual_gate.py --mode=arm` exit 0 before `arm-wake.sh`
+- [ ] `checkpoint-loop.py --product` exit 0 (when product work shipped)
+- [ ] `verify-wake.sh <loop_id>` exit 0 **OR** `WAKE_ALREADY_ARMED` this turn (DOWN means re-arm, not success)
+- [ ] Exactly one `arm-wake.sh` attempted
+- [ ] Follow-up / recovery turns re-arm when verify shows DOWN (no duplicate sleep shells)
+- [ ] No `bind_blocked`
+- [ ] Response does **not** defer all work to “next tick”
+- [ ] `code_changed=yes` → `/code-review` + `/receiving-code-review` logged in REVIEW_FINDINGS before arm
+
+---
+
+## Recovery (loop/wake DOWN)
+
+1. Complete Ritual deliverable **first**
+2. `checkpoint-loop.py --product` or `--blocker`
+3. Then `arm-wake.sh` once
+4. If arming fails, `--infra-only` and stop-hook will retry — do **not** skip step 1–2
 
 ---
 
@@ -98,42 +154,56 @@ If any check fails, fix it before ending the turn. Do not ask the user unless im
 
 When user says **stop loop** or **stop working**:
 
-1. Kill process from pidfile `$TMPDIR/cursor-loop-<loop_id>.pid`
-2. Remove pidfile
-3. Do **not** re-arm or start backup wake
-4. Bind hook sets `stopped: true` — survival hook will not follow up
+1. `bash <package_root>/scripts/refresh-loops.sh . --loop-id <loop_id>`
+2. Do not arm wake
+3. Bind hook sets `stopped: true`
 
-If stop before first `@` bind: still kill by `loop_id` from the contract you were working from.
+---
+
+## Sentinel + state isolation
+
+Each loop owns **one sentinel pair** and **one state file**. Never mix them across windows.
+
+| loop_id | Sentinels | State file (only) | Forbidden in this window |
+|---------|-----------|-------------------|---------------------------|
+| `worker-relay` | `AGENT_LOOP_WAKE_HABITS`, `AGENT_LOOP_TICK_HABITS` | `docs/window-instances/worker-relay/STATE.md` | UI polish, PO brainstorm, code-health refactors |
+| `ux-relay` | `AGENT_LOOP_WAKE_UX_RELAY`, `AGENT_LOOP_TICK_UX_RELAY` | `docs/window-instances/ux-relay/STATE.md` | Relay features, PO brainstorm, refactors |
+| `code-health` | `AGENT_LOOP_WAKE_CODE_HEALTH`, `AGENT_LOOP_TICK_CODE_HEALTH` | `docs/window-instances/code-health/STATE.md` | UI polish, relay features, PO brainstorm |
+| `po-relay` | `AGENT_LOOP_WAKE_PO_RELAY`, `AGENT_LOOP_TICK_PO_RELAY` | `docs/window-instances/po-relay/STATE.md` | Any code/UI shipping; read worker STATE only to feed BACKLOG |
+
+Rules:
+
+- Respond only to your contract's `sentinel` and `wake_sentinel`
+- Ignore all foreign `AGENT_LOOP_*` lines
+- Read/update **only** your contract's `state_file` for backlog, checkpoint, and history
+- Do not summarize or act on another loop's backlog in this chat
 
 ---
 
 ## Extreme recovery
 
-When loops are stuck, duplicate chats, corrupt bindings, or wrong window owns a loop:
-
 ```bash
-bash <package_root>/scripts/force-reset.sh . --all
+bash <package_root>/scripts/force-reset.sh . --all --yes
 bash <package_root>/scripts/validate_contracts.py .
 ```
 
-Then paste `@<contract_doc> keep working` again in the correct window.
+Then paste `@<contract_doc> keep working` in the correct window.
 
 ---
 
-## Maintenance (optional)
+## Refresh after package upgrade
 
 ```bash
-bash <package_root>/scripts/daily-maintenance.sh .
+bash <package_root>/scripts/refresh-loops.sh .
 ```
+
+Then paste `@<contract_doc> keep working` in each window.
 
 ---
 
 ## Enforcement stack
 
-1. **This rule** — end-of-turn gate + verify-loop.sh
-2. **Primary loop** — background sentinel ticker
-3. **Backup wake** — every turn
-4. **Stop hook** — follow-up if loop dead (max 25 turns; warns at 20)
-5. **loop_id lock** — one chat per loop_id (hooks enforce on bind)
-
-Read `<package_root>` from `.cursor/cursor-loop.json`.
+1. This rule — work-first + end-of-turn gate
+2. `arm-wake.sh` — dynamic primary schedule
+3. Stop hook — recovery with product-first message
+4. `loop_id` lock — one chat per loop_id

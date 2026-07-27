@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""stop hook backup — re-arm if bound, not stopped, and pidfile process is dead."""
+"""stop hook backup — re-arm if bound, not stopped, and wake/loop process is dead."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,22 @@ import os
 import sys
 from pathlib import Path
 
+import build_wake_prompt
 import loop_hook_lib as mod
+import ritual_phase as rp
+
+
+def _is_loop_up(binding: dict) -> bool:
+    loop_id = binding.get("loop_id") or ""
+    loop_mode = binding.get("loop_mode") or mod.DEFAULT_LOOP_MODE
+    if loop_mode == "dynamic":
+        return mod.is_wake_process_alive(loop_id, binding)
+    pidfile = (
+        Path(binding["pidfile"])
+        if binding.get("pidfile")
+        else mod.resolve_pidfile_path(loop_id)
+    )
+    return mod.is_loop_process_alive(pidfile)
 
 
 def main() -> int:
@@ -33,6 +48,8 @@ def main() -> int:
 
     loop_id = binding.get("loop_id") or ""
     contract_doc = binding.get("contract_doc") or ""
+    state_file = binding.get("state_file") or ""
+    wake_sentinel = binding.get("wake_sentinel") or ""
     if not loop_id or not contract_doc:
         return 0
 
@@ -40,28 +57,65 @@ def main() -> int:
     if lock and lock.get("conversation_id") not in (None, conversation_id):
         return 0
 
-    pidfile = (
-        Path(binding["pidfile"])
-        if binding.get("pidfile")
-        else mod.resolve_pidfile_path(loop_id)
-    )
-
-    if mod.is_loop_process_alive(pidfile):
+    if _is_loop_up(binding):
         return 0
 
     turns = int(binding.get("survival_turns") or 0) + 1
     binding["survival_turns"] = turns
+    recovery_turns = int(binding.get("recovery_turns") or 0) + 1
+    binding["recovery_turns"] = recovery_turns
     mod.write_binding(root, conversation_id, binding)
 
-    msg = (
-        f"Loop {loop_id} is DOWN. Re-read {contract_doc}, "
-        "execute Arming + Ritual + Loop survival. Do not ask user."
+    last_exit = mod.resolve_last_exit_path(loop_id)
+    last_exit_note = ""
+    if last_exit.is_file():
+        last_exit_note = f" Last exit: {last_exit.read_text(encoding='utf-8').strip()}."
+
+    prompt_json = build_wake_prompt.build_prompt(
+        root=root,
+        loop_id=loop_id,
+        contract_doc=contract_doc,
+        state_file=state_file,
+        recovery=True,
     )
+
+    ritual_note = ""
+    if state_file:
+        state_path = root / state_file
+        if state_path.is_file():
+            state_text = state_path.read_text(encoding="utf-8")
+            checkpoint = rp.parse_checkpoint_table(state_text)
+            gate = rp.required_phase_before_arm(checkpoint, state_text, project_root=root, mode="arm")
+            if not gate.ok:
+                ritual_note = (
+                    f" RITUAL INCOMPLETE: allowed_phase={gate.allowed_phase}; {gate.fix}; "
+                    f"Phase line: {rp.phase_line_marker(gate.allowed_phase)}."
+                )
+
+    msg = (
+        f"Loop {loop_id} wake is DOWN (mode={binding.get('loop_mode', 'dynamic')}). "
+        f"Read {contract_doc}"
+    )
+    if state_file:
+        msg += f" and {state_file}"
+    msg += (
+        "; run Ritual deliverable THIS turn (strict phases 1→9, one at a time). "
+        "Then arm next wake with arm-wake.sh only (never start agent-loop.sh in dynamic mode). "
+        "Do not defer work to next tick. "
+        f"Wake payload: {prompt_json}.{ritual_note}{last_exit_note}"
+    )
+    if recovery_turns >= 3:
+        msg += (
+            f" WARNING: {recovery_turns} recovery wakes without product checkpoint — "
+            "run checkpoint-loop.sh --product --evidence <id> before re-arm."
+        )
     if turns >= mod.SURVIVAL_TURN_WARN:
         msg += (
             f" WARNING: stop-hook recovery turn {turns}/{mod.SURVIVAL_TURN_LIMIT} — "
-            "after limit, paste @contract again or run force-reset.sh --all."
+            "after limit, paste @contract again or run force-reset.sh --loop-id with --yes."
         )
+    if wake_sentinel:
+        msg += f" Monitor: ^{wake_sentinel}"
     print(json.dumps({"followup_message": msg}))
     return 0
 

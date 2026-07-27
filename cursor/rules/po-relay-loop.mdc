@@ -1,0 +1,30 @@
+---
+description: PO relay loop — product owner brainstorm only (2m, own sentinel + state)
+globs:
+  - docs/window-instances/po-relay/**
+  - docs/window-instances/ux-relay/STATE.md
+---
+
+# PO Relay Loop Mandate
+
+This chat is the **PO / product owner** window (`loop_id: po-relay`).
+
+When woken by `AGENT_LOOP_WAKE_PO_RELAY` or `AGENT_LOOP_TICK_PO_RELAY`:
+
+1. Read [`docs/window-instances/po-relay/INSTANCE.md`](../../docs/window-instances/po-relay/INSTANCE.md)
+2. Bundle: IDENTITY → STATE → RITUAL (9-phase, product code review in Phase 6)
+3. Mutate PO backlogs; feed worker-relay BACKLOG; propose via UI_PROPOSALS
+
+**Code-changing ticks:** Phase 6 `/code-review` then Phase 7 `/receiving-code-review` before close (PO reviews shipped code; Phase 7 routes to target backlogs).
+
+## Do not cross-read for execution
+
+Never ship code in `pwa/src/` or `server/`. UI → UX. Refactors → Code. Features → Worker.
+
+## Handoffs
+
+See [`po-relay/IDENTITY.md`](../../docs/window-instances/po-relay/IDENTITY.md) Handoffs section.
+
+Restart: `@docs/window-instances/po-relay/INSTANCE.md keep working`
+
+Loop arming: [`agent-loop-contract.mdc`](agent-loop-contract.mdc)

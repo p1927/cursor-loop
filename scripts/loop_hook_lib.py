@@ -7,7 +7,10 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-PACKAGE_VERSION = "0.3.0"
+PACKAGE_VERSION = "0.5.0"
+
+VALID_LOOP_MODES = frozenset({"dynamic", "persistent", "external"})
+DEFAULT_LOOP_MODE = "dynamic"
 
 SURVIVAL_TURN_WARN = 20
 SURVIVAL_TURN_LIMIT = 25
@@ -23,10 +26,32 @@ LOOP_CONFIG_KEYS = frozenset(
         "loop_script",
         "pidfile",
         "state_file",
+        "loop_mode",
     }
 )
 
-REQUIRED_MANIFEST_KEYS = ("package_root", "contracts_dir")
+REQUIRED_MANIFEST_KEYS = ("package_root",)
+
+
+def resolve_state_dir(manifest: dict) -> str:
+    return manifest.get("state_dir") or manifest.get("contracts_dir") or "docs/window-instances"
+
+
+def resolve_instances_manifest_path(root: Path, manifest: dict) -> Path:
+    rel = manifest.get("instances_manifest")
+    if rel:
+        return root / rel
+    state_dir = resolve_state_dir(manifest)
+    return root / state_dir / "instances.manifest.json"
+
+
+def load_instances_manifest(root: Path, manifest: dict | None = None) -> dict:
+    if manifest is None:
+        manifest = load_manifest(root)
+    path = resolve_instances_manifest_path(root, manifest)
+    if not path.is_file():
+        return {"version": 1, "instances": []}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_manifest(root: Path) -> dict:
@@ -47,6 +72,8 @@ def load_manifest(root: Path) -> dict:
     data.setdefault("version", PACKAGE_VERSION)
     data.setdefault("contract_globs", [])
     data.setdefault("binding_ttl_days", 30)
+    data.setdefault("contracts_dir", resolve_state_dir(data))
+    data.setdefault("state_dir", resolve_state_dir(data))
     return data
 
 
@@ -262,20 +289,42 @@ def resolve_pidfile_path(loop_id: str, cfg: dict | None = None) -> Path:
     return tmp / f"cursor-loop-{loop_id}.pid"
 
 
+def resolve_wake_pidfile_path(loop_id: str) -> Path:
+    tmp = Path(os.environ.get("TMPDIR") or "/tmp")
+    return tmp / f"cursor-loop-{loop_id}.wake.pid"
+
+
+def resolve_last_exit_path(loop_id: str) -> Path:
+    tmp = Path(os.environ.get("TMPDIR") or "/tmp")
+    return tmp / f"cursor-loop-{loop_id}.last_exit"
+
+
+def normalize_loop_mode(cfg: dict) -> str:
+    mode = (cfg.get("loop_mode") or DEFAULT_LOOP_MODE).strip().lower()
+    if mode not in VALID_LOOP_MODES:
+        return DEFAULT_LOOP_MODE
+    return mode
+
+
 def build_binding(root: Path, manifest: dict, rel: str, cfg: dict) -> dict:
     loop_id = cfg["loop_id"]
     pidfile = resolve_pidfile_path(loop_id, cfg)
+    loop_mode = normalize_loop_mode(cfg)
     return {
         "loop_id": loop_id,
         "contract_doc": cfg.get("contract_doc") or rel,
+        "state_file": cfg.get("state_file", ""),
+        "loop_mode": loop_mode,
         "sentinel": cfg.get("sentinel", ""),
         "wake_sentinel": cfg.get("wake_sentinel", ""),
         "interval_sec": cfg.get("interval_sec", ""),
         "monitor_regex": cfg.get("monitor_regex", ""),
         "loop_script": resolve_loop_script(root, manifest, cfg),
         "pidfile": str(pidfile),
+        "wake_pidfile": str(resolve_wake_pidfile_path(loop_id)),
         "stopped": False,
         "survival_turns": 0,
+        "recovery_turns": 0,
     }
 
 
@@ -348,15 +397,31 @@ def release_loop_lock(root: Path, loop_id: str, conversation_id: str) -> None:
 
 
 def iter_contract_files(root: Path, manifest: dict) -> list[Path]:
-    contracts_dir = root / manifest["contracts_dir"]
-    if not contracts_dir.is_dir():
-        return []
-    files = []
-    for path in sorted(contracts_dir.glob("*.md")):
+    seen: set[Path] = set()
+    files: list[Path] = []
+
+    def add(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in seen or not path.is_file():
+            return
         text = path.read_text(encoding="utf-8")
         if has_loop_config(text):
+            seen.add(resolved)
             files.append(path)
-    return files
+
+    contracts_dir = root / resolve_state_dir(manifest)
+    if contracts_dir.is_dir():
+        for path in sorted(contracts_dir.glob("*.md")):
+            add(path)
+
+    for pattern in manifest.get("contract_globs") or []:
+        for path in sorted(root.glob(pattern)):
+            if "/_template/" in str(path.as_posix()):
+                continue
+            if path.suffix == ".md":
+                add(path)
+
+    return sorted(files, key=lambda p: str(p.relative_to(root)))
 
 
 def validate_all_contracts(root: Path, manifest: dict) -> list[str]:
@@ -394,6 +459,14 @@ def validate_all_contracts(root: Path, manifest: dict) -> list[str]:
         if not script_path.is_file():
             errors.append(f"{rel}: loop_script not found: {script}")
 
+        mode = (cfg.get("loop_mode") or DEFAULT_LOOP_MODE).strip().lower()
+        if mode and mode not in VALID_LOOP_MODES:
+            errors.append(f"{rel}: invalid loop_mode '{mode}' (use dynamic|persistent|external)")
+
+        wake = cfg.get("wake_sentinel") or ""
+        if mode == "dynamic" and not wake:
+            errors.append(f"{rel}: loop_mode dynamic requires wake_sentinel")
+
     return errors
 
 
@@ -417,3 +490,29 @@ def kill_loop_process(pidfile: Path) -> bool:
         return True
     except (ValueError, ProcessLookupError, PermissionError, OSError):
         return False
+
+
+def is_wake_process_alive(loop_id: str, binding: dict | None = None) -> bool:
+    path = (
+        Path(binding["wake_pidfile"])
+        if binding and binding.get("wake_pidfile")
+        else resolve_wake_pidfile_path(loop_id)
+    )
+    return is_loop_process_alive(path)
+
+
+def kill_wake_process(loop_id: str, binding: dict | None = None) -> bool:
+    path = (
+        Path(binding["wake_pidfile"])
+        if binding and binding.get("wake_pidfile")
+        else resolve_wake_pidfile_path(loop_id)
+    )
+    killed = kill_loop_process(path)
+    path.unlink(missing_ok=True)
+    return killed
+
+
+def write_last_exit(loop_id: str, reason: str = "SIGTERM") -> None:
+    path = resolve_last_exit_path(loop_id)
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    path.write_text(f"{now} {reason}\n", encoding="utf-8")

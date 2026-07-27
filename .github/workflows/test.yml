@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Unit tests
-        run: python3 -m pytest tests/test_loop_hook_lib.py -q
-      - name: Smoke tests
-        run: bash tests/smoke_hooks.sh && bash tests/smoke_install.sh && bash tests/smoke_minimal_example.sh && bash tests/smoke_enforcement.sh
+      - name: Install pytest
+        run: python3 -m pip install pytest
+      - name: Full test pyramid
+        run: bash tests/run-all.sh

@@ -1,0 +1,21 @@
+---
+description: UX relay loop — independent UI/UX polish tick (5m, own sentinel)
+globs:
+  - docs/window-instances/ux-relay/**
+  - docs/window-instances/po-relay/STATE.md
+---
+
+# UX Relay Loop Mandate
+
+When woken **only** by `AGENT_LOOP_TICK_UX_RELAY` or `AGENT_LOOP_WAKE_UX_RELAY`:
+
+1. Read [`docs/window-instances/ux-relay/INSTANCE.md`](../../docs/window-instances/ux-relay/INSTANCE.md)
+2. Triage [`po-relay/STATE.md`](../../docs/window-instances/po-relay/STATE.md) `UI_PROPOSALS`
+3. Ship one agreed `ui-*` from UX STATE `UI_POLISH_BACKLOG`
+4. 9-phase ritual per RITUAL.md
+
+**Code-changing ticks:** Phase 6 `/code-review` then Phase 7 `/receiving-code-review` before close.
+
+**Do not** respond to other window sentinels.
+
+Restart: `@docs/window-instances/ux-relay/INSTANCE.md keep working`

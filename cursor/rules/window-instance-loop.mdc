@@ -1,0 +1,107 @@
+---
+description: Window Instance universal ritual — phase gates, bundle read order, isolation
+alwaysApply: true
+---
+
+# Window Instance Loop (mandatory)
+
+When bound to a Window Instance (`loop_id` from wake JSON or INSTANCE.md):
+
+## Read order (every wake)
+
+1. `INSTANCE.md` — loop config + paste line
+2. `IDENTITY.md` — role, skills, forbidden
+3. `STATE.md` — backlog, CHECKPOINT, IN_PROGRESS
+4. `RITUAL.md` — 9-phase tick
+
+Use wake JSON `allowed_phase` (always `1-wake` on new tick), `read_order`, and `phase_line`.
+
+## Strict phase line (no jumps)
+
+Every wake **starts at Phase 1** (`1-wake`). Advance **one phase at a time** only:
+
+`1-wake → 2-orient → 3-select → 4-execute → 5-verify → 6-review → 7-triage → 8-close → 9-arm`
+
+**Forbidden:** jumping phases (e.g. `4-execute` → `9-arm`); setting `phase=9-arm` before `8-close`; arming when `validate_ritual_gate.py` fails.
+
+On wake: set `CHECKPOINT.phase=1-wake` immediately, then walk the line. Run `detect_code_changed.sh` in Phase 5.
+
+## 9-phase ritual (all windows)
+
+| Phase | Name |
+|-------|------|
+| 1 | Wake |
+| 2 | Orient |
+| 3 | Select |
+| 4 | Execute |
+| 5 | Verify |
+| 6 | Code review |
+| 7 | Receive review |
+| 8 | Close |
+| 9 | Arm |
+
+Update `CHECKPOINT.phase` after each phase. Spec: [`docs/window-instances/_template/SPEC.md`](../../docs/window-instances/_template/SPEC.md).
+
+## Mandatory review cycle
+
+After Phase 5, set `CHECKPOINT.code_changed` via git diff on `pwa/` and `server/`.
+
+| `code_changed` | Required |
+|----------------|----------|
+| `yes` | Phase 6 [`/code-review`](../../.cursor/commands/code-review.md) then Phase 7 [`/receiving-code-review`](../../.cursor/commands/receiving-code-review.md) on Round N |
+| `no` | Skip with `review_status=skipped` + `review_skip_reason` |
+
+**Round N** = `CHECKPOINT.review_round`. Phase 6 logs findings with `source=round-{N}`; Phase 7 processes only those rows.
+
+Cannot arm (Phase 9) if `code_changed=yes` and round-N findings are untriaged.
+
+## Phase gate (cannot skip)
+
+**Cannot arm wake (Phase 9) if:**
+
+- `CHECKPOINT.phase` is before `8-close`
+- `CHECKPOINT.review_status` is `pending`
+- `code_changed=yes` and no REVIEW_FINDINGS row with `source` containing `round-{N}`
+
+**Allowed skip:** set `review_status=skipped` with non-empty `review_skip_reason` (docs-only ticks).
+
+**Cannot set Phase 8 close if** `review_status=pending` unless transitioning from Phase 6/7 with explicit skip.
+
+## REVIEW_FINDINGS (Phase 6–7)
+
+Log findings in STATE `REVIEW_FINDINGS` table:
+
+| id | severity | finding | source | action | backlog_ref | status |
+
+- Id convention: `{prefix}-r{N}-{seq}` (zero-finding sentinel: `{prefix}-r{N}-000`)
+- Severity: `critical` | `high` | `medium` | `low`
+- Action: `fix-now` | `backlog` | `closed` | `pushback`
+- Status: `open` | `closed`
+
+Triage each round-N row in Phase 7 before Phase 8 close.
+
+## Isolation
+
+- Read/update **only** your instance's `STATE.md` for backlog, checkpoint, history
+- Never act on `forbidden_loops` STATE files (from wake JSON)
+- Respond only to your contract's sentinels
+
+Registry: [`docs/window-instances/instances.manifest.json`](../../docs/window-instances/instances.manifest.json)  
+Handoffs: each instance's `IDENTITY.md` (see manifest `handoffs_out`)
+
+## Phase 9 delegates to agent-loop-contract
+
+After Phase 8 close: `checkpoint-loop.py --product` + `arm-wake.sh` + `verify-wake.sh` exit 0 per [`agent-loop-contract.mdc`](agent-loop-contract.mdc).
+
+**Steady state:** between turns, `instance-doctor` should show `wake=ARMED` for your `loop_id`. Dynamic wake is one-shot per arm — DOWN after a sentinel fires is normal mid-turn, **not** at turn end.
+
+**Follow-up turns** ("Briefly inform…", recovery wakes): if `verify-wake` shows DOWN, re-arm before ending the turn.
+
+Phase 9 checklist: [`docs/window-instances/_template/RITUAL.base.md`](../../docs/window-instances/_template/RITUAL.base.md).
+
+## Validation
+
+```bash
+python3 tools/cursor-loop/scripts/validate_instance.py .
+bash tools/cursor-loop/scripts/instance-doctor.sh
+```

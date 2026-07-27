@@ -47,14 +47,28 @@ def _clear_locks(root: Path, loop_id: str | None) -> list[str]:
 def _clear_pidfiles(loop_id: str | None) -> list[str]:
     tmp = Path(os.environ.get("TMPDIR") or "/tmp")
     removed: list[str] = []
-    pattern = f"cursor-loop-{loop_id}.pid" if loop_id else "cursor-loop-*.pid"
-    for path in tmp.glob(pattern):
-        if loop_id:
+    patterns = (
+        [f"cursor-loop-{loop_id}.pid", f"cursor-loop-{loop_id}.wake.pid"]
+        if loop_id
+        else ["cursor-loop-*.pid", "cursor-loop-*.wake.pid"]
+    )
+    for pattern in patterns:
+        for path in tmp.glob(pattern):
             mod.kill_loop_process(path)
-        else:
-            mod.kill_loop_process(path)
-        path.unlink(missing_ok=True)
-        removed.append(path.name)
+            path.unlink(missing_ok=True)
+            removed.append(path.name)
+    aux_patterns = (
+        [
+            f"cursor-loop-{loop_id}.last_exit",
+            f"cursor-loop-{loop_id}.wake.armed",
+        ]
+        if loop_id
+        else ["cursor-loop-*.last_exit", "cursor-loop-*.wake.armed"]
+    )
+    for pattern in aux_patterns:
+        for path in tmp.glob(pattern):
+            path.unlink(missing_ok=True)
+            removed.append(path.name)
     return removed
 
 
@@ -72,12 +86,24 @@ def main() -> int:
         action="store_true",
         help="Kill processes, clear pidfiles, bindings, locks (default if no flags)",
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Required with --all when clearing all loop_ids (safety guard)",
+    )
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
 
     root = Path(args.project).resolve()
     loop_id = args.loop_id
     do_all = args.all or not (args.kill or args.bindings or args.locks)
+
+    if do_all and not loop_id and not args.yes:
+        print(
+            "force-reset: --all without --loop-id requires --yes (kills every loop window)",
+            file=sys.stderr,
+        )
+        return 1
 
     result: dict[str, list[str]] = {
         "pidfiles": [],

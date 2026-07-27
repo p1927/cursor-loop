@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""cwin — Cursor Window Instances CLI."""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def find_project_root(start: Path | None = None) -> Path:
+    cur = (start or Path.cwd()).resolve()
+    for _ in range(25):
+        if (cur / ".cursor" / "cursor-loop.json").is_file():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    raise SystemExit("No .cursor/cursor-loop.json found — run install.sh first")
+
+
+def load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def package_root(project: Path) -> Path:
+    m = load_json(project / ".cursor" / "cursor-loop.json")
+    return project / m["package_root"]
+
+
+def scripts_dir(project: Path) -> Path:
+    return package_root(project) / "scripts"
+
+
+def parse_checkpoint(state_text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if "## CHECKPOINT" not in state_text:
+        return out
+    section = state_text.split("## CHECKPOINT", 1)[1].split("\n## ", 1)[0]
+    for line in section.splitlines():
+        if "|" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3 and parts[1] and parts[2]:
+            key = parts[1].strip("`")
+            val = parts[2].strip("`")
+            if key.lower() not in ("field", "-------"):
+                out[key] = val
+    return out
+
+
+def count_open_backlog(state_text: str) -> int:
+    return sum(1 for line in state_text.splitlines() if re.match(r"^\s*- \[ \]", line))
+
+
+def wake_status(project: Path, loop_id: str) -> str:
+    verify = scripts_dir(project) / "verify-wake.sh"
+    proc = subprocess.run(["bash", str(verify), loop_id], cwd=project, capture_output=True, text=True)
+    line = (proc.stdout or proc.stderr or "").strip()
+    if "WAKE_ARMED" in line:
+        return "ARMED"
+    if "WAKE_DOWN" in line:
+        return "DOWN"
+    return "?"
+
+
+def load_instances(project: Path) -> tuple[dict, list[dict]]:
+    sys.path.insert(0, str(scripts_dir(project)))
+    import loop_hook_lib as lib
+
+    manifest = lib.load_manifest(project)
+    instances = lib.load_instances_manifest(project, manifest)
+    return manifest, instances.get("instances") or []
+
+
+def cmd_status(project: Path, as_json: bool) -> int:
+    manifest, instances = load_instances(project)
+    preset = manifest.get("instances_preset", "—")
+    rows = []
+    for entry in instances:
+        loop_id = entry.get("loop_id", "")
+        state_file = project / entry.get("state_file", "")
+        state_text = state_file.read_text(encoding="utf-8") if state_file.is_file() else ""
+        cp = parse_checkpoint(state_text)
+        rows.append(
+            {
+                "loop_id": loop_id,
+                "wake": wake_status(project, loop_id),
+                "phase": cp.get("phase", "—"),
+                "review": cp.get("review_status", "—"),
+                "backlog_open": count_open_backlog(state_text),
+                "paste": f"@{entry.get('contract_doc', '')} keep working",
+            }
+        )
+    if as_json:
+        print(json.dumps({"project": str(project), "preset": preset, "instances": rows}, indent=2))
+        return 0
+    print(f"Window Instances — {project}")
+    print(f"Preset: {preset}   Instances: {len(rows)}")
+    print()
+    print(f"{'LOOP_ID':<14} {'WAKE':<7} {'PHASE':<8} {'REVIEW':<8} {'BACKLOG':<7} PASTE")
+    for r in rows:
+        print(
+            f"{r['loop_id']:<14} {r['wake']:<7} {r['phase']:<8} {r['review']:<8} "
+            f"{r['backlog_open']:<7} {r['paste']}"
+        )
+    if any(r["wake"] == "DOWN" for r in rows):
+        print('\nTip: send "keep working" in DOWN chats to re-arm; or: cwin sync / cwin refresh')
+    return 0
+
+
+def cmd_list(project: Path) -> int:
+    _, instances = load_instances(project)
+    for e in instances:
+        print(f"{e.get('loop_id')}\t{e.get('archetype')}\t@{e.get('contract_doc')} keep working")
+    return 0
+
+
+def cmd_paste(project: Path, loop_id: str) -> int:
+    _, instances = load_instances(project)
+    for e in instances:
+        if e.get("loop_id") == loop_id:
+            print(f"@{e.get('contract_doc')} keep working")
+            return 0
+    raise SystemExit(f"Unknown loop_id: {loop_id}")
+
+
+def cmd_presets(project: Path) -> int:
+    presets_dir = package_root(project) / "window-instances" / "presets"
+    for d in sorted(presets_dir.iterdir()):
+        if d.is_dir() and (d / "instances.manifest.json").is_file():
+            n = len(load_json(d / "instances.manifest.json").get("instances") or [])
+            print(f"{d.name}\t{n} instance(s)")
+    return 0
+
+
+def cmd_bootstrap(project: Path, preset: str, mode: str, refresh: bool) -> int:
+    script = package_root(project) / "window-instances" / "scripts" / "bootstrap_instances.py"
+    cmd = ["python3", str(script), str(project), "--preset", preset, "--mode", mode]
+    if refresh:
+        cmd.append("--refresh")
+    return subprocess.call(cmd, cwd=project)
+
+
+def cmd_refresh(project: Path, loop_id: str | None) -> int:
+    cmd = ["bash", str(scripts_dir(project) / "refresh-loops.sh"), str(project)]
+    if loop_id:
+        cmd.extend(["--loop-id", loop_id])
+    return subprocess.call(cmd, cwd=project)
+
+
+def cmd_sync(project: Path) -> int:
+    manifest = load_json(project / ".cursor" / "cursor-loop.json")
+    preset = manifest.get("instances_preset") or ""
+    if not preset:
+        print("cwin sync: no instances_preset in cursor-loop.json — pass --preset", file=sys.stderr)
+        return 1
+    rc = cmd_install(project, preset)
+    if rc:
+        return rc
+    return cmd_refresh(project, None)
+
+
+def cmd_validate(project: Path) -> int:
+    rc1 = subprocess.call(["python3", str(scripts_dir(project) / "validate_instance.py"), str(project)])
+    rc2 = subprocess.call(["python3", str(scripts_dir(project) / "validate_contracts.py"), str(project)])
+    return rc1 or rc2
+
+
+def cmd_doctor(project: Path) -> int:
+    return subprocess.call(["bash", str(scripts_dir(project) / "doctor.sh"), str(project)], cwd=project)
+
+
+def cmd_install(project: Path, preset: str | None) -> int:
+    cmd = ["bash", str(package_root(project) / "install.sh"), str(project), "--symlink", "--contracts-dir", "docs/window-instances"]
+    if preset:
+        cmd.extend(["--preset", preset])
+    return subprocess.call(cmd, cwd=project)
+
+
+def cmd_create(project: Path, loop_id: str, extra: list[str]) -> int:
+    script = package_root(project) / "window-instances" / "scripts" / "scaffold-instance.sh"
+    return subprocess.call(["bash", str(script), loop_id, *extra, "--yes"], cwd=project)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="cwin", description="Cursor Window Instances CLI")
+    parser.add_argument("project", nargs="?", default=".", help="Project root")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("status", help="Show all instances and wake state")
+    p.add_argument("--json", action="store_true")
+    sub.add_parser("list")
+    sub.add_parser("presets")
+    sub.add_parser("validate")
+    sub.add_parser("doctor")
+    sub.add_parser("refresh")
+    sub.add_parser("sync", help="Re-link rules/instances from package + kill stale loops")
+    p = sub.add_parser("paste")
+    p.add_argument("loop_id")
+    p = sub.add_parser("bootstrap")
+    p.add_argument("--preset", required=True)
+    p.add_argument("--mode", choices=("symlink", "copy"), default="symlink")
+    p.add_argument("--refresh", action="store_true")
+    p = sub.add_parser("stop")
+    p.add_argument("--loop-id", default="")
+    p.add_argument("--all", action="store_true")
+    p = sub.add_parser("install")
+    p.add_argument("--preset", default="")
+    p = sub.add_parser("create")
+    p.add_argument("loop_id")
+    p.add_argument("extra", nargs=argparse.REMAINDER)
+
+    args = parser.parse_args()
+    project = find_project_root(Path(args.project))
+
+    cmds = {
+        "status": lambda: cmd_status(project, args.json),
+        "list": lambda: cmd_list(project),
+        "paste": lambda: cmd_paste(project, args.loop_id),
+        "presets": lambda: cmd_presets(project),
+        "validate": lambda: cmd_validate(project),
+        "doctor": lambda: cmd_doctor(project),
+        "refresh": lambda: cmd_refresh(project, None),
+        "sync": lambda: cmd_sync(project),
+        "stop": lambda: cmd_refresh(project, None if args.all or not args.loop_id else args.loop_id),
+        "bootstrap": lambda: cmd_bootstrap(project, args.preset, args.mode, args.refresh),
+        "install": lambda: cmd_install(project, args.preset or None),
+        "create": lambda: cmd_create(project, args.loop_id, args.extra),
+    }
+    return cmds[args.command]()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generic Cursor agent wake loop — persistent sentinel ticker.
+# Generic Cursor agent wake loop — persistent sentinel ticker (legacy persistent/external mode).
 # Configure via env: LOOP_ID, SENTINEL, INTERVAL, PROMPT, PIDFILE (optional).
 set -euo pipefail
 
@@ -8,6 +8,7 @@ SENTINEL="${SENTINEL:?SENTINEL is required}"
 INTERVAL="${INTERVAL:-120}"
 PROMPT="${PROMPT:-Read your loop contract doc and run Ritual. Do not ask user.}"
 PIDFILE="${PIDFILE:-${TMPDIR:-/tmp}/cursor-loop-${LOOP_ID}.pid}"
+LAST_EXIT="${TMPDIR:-/tmp}/cursor-loop-${LOOP_ID}.last_exit"
 
 if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]] || [[ "$INTERVAL" -lt 1 ]]; then
   echo "AGENT_LOOP_ERROR invalid INTERVAL=${INTERVAL}" >&2
@@ -23,8 +24,13 @@ if [[ -f "$PIDFILE" ]]; then
   rm -f "$PIDFILE"
 fi
 
+on_term() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ SIGTERM" > "$LAST_EXIT" 2>/dev/null || true
+  rm -f "$PIDFILE"
+}
+trap on_term EXIT INT TERM
+
 echo "$$" > "$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT INT TERM
 
 echo "AGENT_LOOP_STARTED loop_id=${LOOP_ID} interval=${INTERVAL}s sentinel=${SENTINEL} pid=$$"
 

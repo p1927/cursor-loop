@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Report UP/DOWN for cursor-loop pidfiles.
+# Report UP/DOWN for cursor-loop pidfiles and dynamic wake shells.
 set -euo pipefail
 
 JSON=0
@@ -25,7 +25,17 @@ shopt -s nullglob
 found=0
 json_items=()
 
+report_line() {
+  local kind="$1" name="$2" status="$3" pid="$4" path="$5"
+  if [[ "$JSON" -eq 1 ]]; then
+    json_items+=("{\"kind\":\"${kind}\",\"name\":\"${name}\",\"status\":\"${status}\",\"pid\":\"${pid}\",\"path\":\"${path}\"}")
+  else
+    echo "${status}  ${name} pid=${pid} (${kind})"
+  fi
+}
+
 for pidfile in "${TMP}"/cursor-loop-*.pid; do
+  [[ "$pidfile" == *.wake.pid ]] && continue
   found=1
   name="$(basename "$pidfile" .pid)"
   loop_id="${name#cursor-loop-}"
@@ -34,17 +44,27 @@ for pidfile in "${TMP}"/cursor-loop-*.pid; do
   fi
   pid="$(cat "$pidfile" 2>/dev/null || true)"
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    if [[ "$JSON" -eq 1 ]]; then
-      json_items+=("{\"name\":\"${name}\",\"pidfile\":\"${pidfile}\",\"status\":\"UP\",\"pid\":\"${pid}\"}")
-    else
-      echo "UP   ${name} pid=${pid}"
+    report_line "persistent" "$name" "STALE" "$pid" "$pidfile"
+    if [[ "$JSON" -eq 0 ]]; then
+      echo "  ^ legacy agent-loop.sh — run: cwin refresh (window instances use dynamic wake only)"
     fi
   else
-    if [[ "$JSON" -eq 1 ]]; then
-      json_items+=("{\"name\":\"${name}\",\"pidfile\":\"${pidfile}\",\"status\":\"DOWN\",\"pid\":\"\"}")
-    else
-      echo "DOWN ${name} (stale pidfile)"
-    fi
+    report_line "persistent" "$name" "DOWN" "" "$pidfile"
+  fi
+done
+
+for wakefile in "${TMP}"/cursor-loop-*.wake.pid; do
+  found=1
+  base="$(basename "$wakefile" .wake.pid)"
+  loop_id="${base#cursor-loop-}"
+  if [[ -n "$FILTER_LOOP_ID" && "$loop_id" != "$FILTER_LOOP_ID" ]]; then
+    continue
+  fi
+  pid="$(cat "$wakefile" 2>/dev/null || true)"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    report_line "dynamic-wake" "$base" "ARMED" "$pid" "$wakefile"
+  else
+    report_line "dynamic-wake" "$base" "DOWN" "" "$wakefile"
   fi
 done
 
@@ -55,5 +75,5 @@ if [[ "$JSON" -eq 1 ]]; then
     (IFS=,; echo "[${json_items[*]}]")
   fi
 elif [[ "$found" -eq 0 ]]; then
-  echo "No loop pidfiles found under ${TMP}"
+  echo "No cursor-loop pidfiles under ${TMP}"
 fi
