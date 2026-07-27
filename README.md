@@ -1,0 +1,168 @@
+# cursor-loop
+
+Standalone terminal loop system for **Cursor Agent** chats. One paste per window → agent arms a persistent wake loop and keeps working.
+
+No MCP. No server. Works in any repo with bash, python3, and Cursor Editor Agent.
+
+---
+
+## Quick start
+
+### 1. Add the package
+
+```bash
+git submodule add https://github.com/p1927/cursor-loop.git tools/cursor-loop
+# or: cp -R /path/to/cursor-loop ./tools/cursor-loop
+```
+
+### 2. Install into your project
+
+```bash
+bash tools/cursor-loop/install.sh . --symlink
+```
+
+Copy mode (vendors the package into your repo):
+
+```bash
+bash tools/cursor-loop/install.sh . --copy
+```
+
+### 3. Create a loop contract
+
+```bash
+cp tools/cursor-loop/template/AGENT_LOOP_TEMPLATE.md docs/agents/my-task.md
+# Edit loop_id, sentinel (unique!), interval_sec, Task
+```
+
+### 4. Start working
+
+Open Cursor Agent chat → paste:
+
+```text
+@docs/agents/my-task.md keep working
+```
+
+---
+
+## Install options
+
+| Flag | Description |
+|------|-------------|
+| `--symlink` | Symlink rule + hooks to package (default) |
+| `--copy` | Copy full package to `tools/cursor-loop` and copy hooks |
+| `--package-path PATH` | Package location relative to project root |
+| `--contracts-dir DIR` | Where loop contracts live (default: `docs/agents`) |
+| `--uninstall` | Remove Cursor artifacts (not the package) |
+
+---
+
+## What gets installed
+
+| Artifact | Location |
+|----------|----------|
+| Cursor rule | `.cursor/rules/agent-loop-contract.mdc` |
+| Hooks | `.cursor/hooks/loop-bind.sh`, `loop-survival.sh`, `_common.sh` |
+| Manifest | `.cursor/cursor-loop.json` |
+| Hooks config | merged into `.cursor/hooks.json` |
+| Package scripts | stay at `<package_root>/scripts/` |
+
+---
+
+## Daily UX
+
+1. Open one Agent chat per task/window
+2. Paste: `@docs/agents/<contract>.md keep working`
+3. Walk away
+
+**Stop:** say **stop loop** in that chat.
+
+**After IDE restart:** paste the same line again.
+
+**Status:**
+
+```bash
+bash tools/cursor-loop/scripts/loop-status.sh
+bash tools/cursor-loop/scripts/doctor.sh .
+```
+
+---
+
+## Package layout
+
+```text
+cursor-loop/
+├── VERSION
+├── install.sh
+├── scripts/
+│   ├── agent-loop.sh
+│   ├── loop-status.sh
+│   ├── loop_hook_lib.py
+│   ├── hook_bind.py
+│   ├── hook_survival.py
+│   ├── merge_hooks.py
+│   └── doctor.sh
+├── cursor/
+│   ├── rules/agent-loop-contract.mdc
+│   └── hooks/
+│       ├── _common.sh
+│       ├── loop-bind.sh
+│       ├── loop-survival.sh
+│       └── hooks.json.snippet
+├── template/
+└── tests/
+```
+
+---
+
+## Loop config (in each contract doc)
+
+| Field | Purpose |
+|-------|---------|
+| `loop_id` | Unique id; pidfile is `$TMPDIR/cursor-loop-<loop_id>.pid` |
+| `sentinel` | Primary tick line prefix |
+| `wake_sentinel` | Backup one-shot wake prefix |
+| `interval_sec` | Seconds between ticks |
+| `monitor_regex` | `notify_on_output` pattern (anchor with `^`) |
+| `loop_script` | Path to `agent-loop.sh` (required) |
+| `contract_doc` | Path to this contract file |
+
+**One loop per chat. Unique sentinel per window.**
+
+---
+
+## How wake works
+
+1. Agent starts `agent-loop.sh` in a background shell
+2. Agent sets `notify_on_output` on the sentinel regex
+3. Script prints `SENTINEL {"loop_id":"...","prompt":"..."}` every N seconds
+4. Cursor wakes the agent → ritual → loop survival → repeat
+
+Triple redundancy: primary loop + backup wake every turn + stop hook (binding in `.cursor/loop-bindings/`).
+
+The stop hook respects `stopped: true` set when the user says **stop loop**. After 25 agent turns (`loop_limit`), the stop hook stops emitting follow-ups.
+
+---
+
+## Requirements
+
+- Cursor **Editor** Agent (shell + background terminals + output monitoring)
+- bash
+- python3
+- rsync (for `--copy` install)
+- Not supported: Cloud Agents, headless ACP without shell monitoring
+
+---
+
+## Development
+
+```bash
+python3 -m pytest tests/test_loop_hook_lib.py -q
+bash tests/smoke_hooks.sh    # requires Habits or adjust path
+bash tests/smoke_install.sh
+```
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

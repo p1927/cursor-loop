@@ -1,0 +1,60 @@
+---
+description: Self-arming terminal agent loops when user @mentions a loop contract doc
+alwaysApply: true
+---
+
+# Agent Loop Contract
+
+When the user `@`-mentions a **loop contract** file, or says **keep working** with one attached, you MUST execute the full loop lifecycle. Do not ask the user to run shell commands.
+
+## Matching docs
+
+Any of:
+
+- `docs/agents/*.md`
+- `docs/START_LOOPS.md` (then open the linked contract for this window)
+- `**/AGENT_LOOP*.md`
+- Project wake docs that contain a `## Loop config` table
+
+## On first message or tick
+
+1. Read the doc's **Loop config** table (`loop_id`, `sentinel`, `wake_sentinel`, `interval_sec`, `monitor_regex`, `pidfile`, `loop_script`).
+2. Execute **Arming** if the primary loop is not running (`pgrep` / pidfile check).
+3. Run **Ritual** immediately — do not wait for the first automated tick.
+4. Execute **Loop survival** before ending the turn — no exceptions.
+
+## Arming (mandatory)
+
+1. If pidfile process is alive → skip start; go to Ritual.
+2. Start primary loop in a **background shell** (`block_until_ms: 0`) using `loop_script` from Loop config (required):
+
+```bash
+LOOP_ID=<loop_id> SENTINEL=<sentinel> INTERVAL=<interval_sec> \
+PROMPT='Read <contract_doc> and run Ritual. Do not ask user.' \
+bash <loop_script>
+```
+
+If `loop_script` is missing, read `.cursor/cursor-loop.json` → `package_root/scripts/agent-loop.sh`.
+
+3. Set **`notify_on_output`** on regex: `<monitor_regex>` (must be anchored, e.g. `^AGENT_LOOP_TICK_*`).
+4. Run Ritual **now**.
+
+## Loop survival (mandatory every turn)
+
+Before ending ANY turn:
+
+1. **Verify primary loop** — if DOWN, re-run Arming.
+2. **Backup wake** — background `sleep <interval_sec>` then echo `<wake_sentinel> {"prompt":"..."}'` with `notify_on_output` on `^<wake_sentinel>`.
+3. **Checkpoint** — record PID + shell id in the doc's state file if listed.
+
+Triple redundancy: primary loop + backup wake every turn + stop hook (reads `.cursor/loop-bindings/<conversation_id>.json`; `beforeSubmitPrompt` sets binding on `@` contract, clears on **stop loop** via `stopped: true`).
+
+## Sentinel isolation
+
+- Respond **only** to the `sentinel` / `wake_sentinel` from **this chat's** loop contract.
+- Ignore ticks from other windows (`AGENT_LOOP_TICK_*` not in your config table).
+- One loop per Composer chat.
+
+## Stop
+
+When the user says **stop loop** or **stop working**: kill the loop process for this `loop_id`, clear pidfile, do not re-arm. The bind hook sets `stopped: true` on the binding so the stop hook will not follow up.
