@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- `ARCHITECTURE.md` — system design reference
+- `examples/minimal-project/` — smallest consumer setup
+- `install-remote.sh` — curl one-liner install
+- Binding TTL: `binding_ttl_days` in manifest, `updated_at` on bindings
+- `cleanup_bindings.py` + opportunistic prune in bind hook
+- Cron example in ARCHITECTURE.md
+
 ## 0.1.0
 
 - Initial standalone release

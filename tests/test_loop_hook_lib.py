@@ -80,3 +80,37 @@ def test_build_binding(tmp_path: Path) -> None:
     assert binding["loop_id"] == "demo-task"
     assert binding["stopped"] is False
     assert "pidfile" in binding
+
+
+def test_write_binding_sets_updated_at(tmp_path: Path) -> None:
+    mod.write_binding(tmp_path, "conv-1", {"loop_id": "x"})
+    data = json.loads(mod.binding_path(tmp_path, "conv-1").read_text(encoding="utf-8"))
+    assert "updated_at" in data
+
+
+def test_cleanup_stale_bindings(tmp_path: Path) -> None:
+    bindings_dir = tmp_path / ".cursor" / "loop-bindings"
+    bindings_dir.mkdir(parents=True)
+    manifest_path = tmp_path / ".cursor" / "cursor-loop.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "package_root": "tools/cursor-loop",
+                "contracts_dir": "docs/agents",
+                "binding_ttl_days": 7,
+            }
+        ),
+        encoding="utf-8",
+    )
+    stale = bindings_dir / "old-chat.json"
+    stale.write_text(
+        json.dumps({"loop_id": "a", "updated_at": "2020-01-01T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    fresh = bindings_dir / "new-chat.json"
+    mod.write_binding(tmp_path, "new-chat", {"loop_id": "b"})
+
+    removed = mod.cleanup_stale_bindings(tmp_path, mod.load_manifest(tmp_path))
+    assert "old-chat" in removed
+    assert not stale.is_file()
+    assert fresh.is_file()

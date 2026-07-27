@@ -10,31 +10,34 @@ No MCP. No server. Works in any repo with bash, python3, and Cursor Editor Agent
 
 ### 1. Add the package
 
+**curl one-liner** (vendors into `tools/cursor-loop`, no git required):
+
 ```bash
-git submodule add https://github.com/p1927/cursor-loop.git tools/cursor-loop
-# or: cp -R /path/to/cursor-loop ./tools/cursor-loop
+curl -fsSL https://raw.githubusercontent.com/p1927/cursor-loop/v0.2.0/install-remote.sh | bash -s -- .
 ```
 
-### 2. Install into your project
+**git submodule:**
 
 ```bash
+git submodule add https://github.com/p1927/cursor-loop.git tools/cursor-loop
 bash tools/cursor-loop/install.sh . --symlink
 ```
 
-Copy mode (vendors the package into your repo):
+**Or copy:**
 
 ```bash
-bash tools/cursor-loop/install.sh . --copy
+cp -R /path/to/cursor-loop ./tools/cursor-loop
+bash tools/cursor-loop/install.sh . --symlink
 ```
 
-### 3. Create a loop contract
+### 2. Create a loop contract
 
 ```bash
 cp tools/cursor-loop/template/AGENT_LOOP_TEMPLATE.md docs/agents/my-task.md
 # Edit loop_id, sentinel (unique!), interval_sec, Task
 ```
 
-### 4. Start working
+### 3. Start working
 
 Open Cursor Agent chat → paste:
 
@@ -53,6 +56,10 @@ Open Cursor Agent chat → paste:
 | `--package-path PATH` | Package location relative to project root |
 | `--contracts-dir DIR` | Where loop contracts live (default: `docs/agents`) |
 | `--uninstall` | Remove Cursor artifacts (not the package) |
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for system design, binding TTL, and failure modes.
+
+**Minimal example:** [examples/minimal-project/](examples/minimal-project/)
 
 ---
 
@@ -78,12 +85,14 @@ Open Cursor Agent chat → paste:
 
 **After IDE restart:** paste the same line again.
 
-**Status:**
+**Maintenance:**
 
 ```bash
-bash tools/cursor-loop/scripts/loop-status.sh
-bash tools/cursor-loop/scripts/doctor.sh .
+python3 tools/cursor-loop/scripts/cleanup_bindings.py .        # prune stale bindings
+python3 tools/cursor-loop/scripts/cleanup_bindings.py . --dry-run
 ```
+
+Default TTL: 30 days (`binding_ttl_days` in manifest). Cron example in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -91,7 +100,8 @@ bash tools/cursor-loop/scripts/doctor.sh .
 
 ```text
 cursor-loop/
-├── VERSION
+├── ARCHITECTURE.md
+├── install-remote.sh
 ├── install.sh
 ├── scripts/
 │   ├── agent-loop.sh
@@ -100,14 +110,12 @@ cursor-loop/
 │   ├── hook_bind.py
 │   ├── hook_survival.py
 │   ├── merge_hooks.py
+│   ├── cleanup_bindings.py
 │   └── doctor.sh
 ├── cursor/
 │   ├── rules/agent-loop-contract.mdc
 │   └── hooks/
-│       ├── _common.sh
-│       ├── loop-bind.sh
-│       ├── loop-survival.sh
-│       └── hooks.json.snippet
+├── examples/minimal-project/
 ├── template/
 └── tests/
 ```

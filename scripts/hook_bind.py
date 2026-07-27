@@ -32,6 +32,8 @@ def main() -> int:
     except (FileNotFoundError, ValueError):
         return 0
 
+    mod.maybe_cleanup_bindings(root, manifest)
+
     if mod.is_stop_request(prompt):
         binding = mod.read_binding(root, conversation_id)
         if binding:

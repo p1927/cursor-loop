@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-PACKAGE_VERSION = "0.1.0"
+PACKAGE_VERSION = "0.2.0"
 
 LOOP_CONFIG_KEYS = frozenset(
     {
@@ -42,6 +43,7 @@ def load_manifest(root: Path) -> dict:
 
     data.setdefault("version", PACKAGE_VERSION)
     data.setdefault("contract_globs", [])
+    data.setdefault("binding_ttl_days", 30)
     return data
 
 
@@ -143,7 +145,86 @@ def write_binding(root: Path, conversation_id: str, data: dict) -> None:
     path = binding_path(root, conversation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     data.setdefault("schema_version", 1)
+    data["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def binding_age_days(binding: dict) -> float | None:
+    raw = binding.get("updated_at") or binding.get("created_at")
+    if not raw:
+        return None
+    try:
+        updated = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - updated).total_seconds() / 86400
+
+
+def cleanup_stale_bindings(
+    root: Path,
+    manifest: dict,
+    *,
+    dry_run: bool = False,
+) -> list[str]:
+    """Remove bindings older than binding_ttl_days. Returns deleted conversation ids."""
+    bindings_dir = root / ".cursor" / "loop-bindings"
+    if not bindings_dir.is_dir():
+        return []
+
+    ttl_days = int(manifest.get("binding_ttl_days") or 30)
+    cutoff = timedelta(days=ttl_days)
+    now = datetime.now(timezone.utc)
+    removed: list[str] = []
+
+    for path in bindings_dir.glob("*.json"):
+        if path.name.startswith("."):
+            continue
+        try:
+            binding = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            if not dry_run:
+                path.unlink(missing_ok=True)
+            removed.append(path.stem)
+            continue
+
+        raw = binding.get("updated_at") or binding.get("created_at")
+        if raw:
+            try:
+                updated = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                age = now - updated
+            except ValueError:
+                age = cutoff + timedelta(seconds=1)
+        else:
+            age = cutoff + timedelta(seconds=1)
+
+        if age > cutoff:
+            if not dry_run:
+                path.unlink(missing_ok=True)
+            removed.append(path.stem)
+
+    return removed
+
+
+def maybe_cleanup_bindings(root: Path, manifest: dict) -> None:
+    """Lightweight opportunistic cleanup — runs at most once per 24h per project."""
+    stamp = root / ".cursor" / "loop-bindings" / ".last_cleanup"
+    now = datetime.now(timezone.utc)
+    if stamp.is_file():
+        try:
+            last = datetime.fromisoformat(stamp.read_text(encoding="utf-8").strip())
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if (now - last) < timedelta(hours=24):
+                return
+        except ValueError:
+            pass
+    cleanup_stale_bindings(root, manifest)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(now.replace(microsecond=0).isoformat() + "\n", encoding="utf-8")
 
 
 def is_stop_request(prompt: str) -> bool:

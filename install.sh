@@ -125,7 +125,9 @@ chmod +x \
   "${INSTALL_PACKAGE}/scripts/loop-status.sh" \
   "${INSTALL_PACKAGE}/scripts/hook_bind.py" \
   "${INSTALL_PACKAGE}/scripts/hook_survival.py" \
-  "${INSTALL_PACKAGE}/scripts/merge_hooks.py"
+  "${INSTALL_PACKAGE}/scripts/merge_hooks.py" \
+  "${INSTALL_PACKAGE}/scripts/cleanup_bindings.py" \
+  "${INSTALL_PACKAGE}/scripts/doctor.sh"
 
 MANIFEST="${TARGET}/.cursor/cursor-loop.json"
 cat > "$MANIFEST" <<EOF
@@ -133,7 +135,8 @@ cat > "$MANIFEST" <<EOF
   "version": "${VERSION}",
   "package_root": "${PKG_REL}",
   "contracts_dir": "${CONTRACTS_DIR}",
-  "contract_globs": []
+  "contract_globs": [],
+  "binding_ttl_days": 30
 }
 EOF
 echo "wrote: ${MANIFEST}"
